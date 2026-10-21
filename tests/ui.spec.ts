@@ -103,3 +103,22 @@ test('active research can be cancelled and restarted',async({page})=>{
  await page.getByRole('button',{name:'Erneut beginnen'}).click();
  await expect(page.getByRole('heading',{name:'Was möchtest du überprüfen?'})).toBeVisible();
 });
+
+test('location ambiguity can be clarified without adding an unrelated date',async({page})=>{
+ const original='Hier ist das Fahrradfahren verboten.';
+ const clarified='Auf dem Marktplatz in Lindenstadt ist das Fahrradfahren während des Wochenmarkts verboten.';
+ await page.route('**/api/claims',route=>route.fulfill({json:{claims:[{id:'c1',originalText:original,normalizedText:original,timeScope:null,locationScope:null,entities:[],checkability:'unclear'}]}}));
+ let submitted:Record<string,unknown>|undefined;
+ await page.route('**/api/runs',async route=>{
+  submitted=route.request().postDataJSON();
+  await route.fulfill({status:201,json:{id:'clarified-ui',mode:'demo',status:'completed',createdAt:new Date().toISOString(),expiresAt:new Date().toISOString(),deadlineAt:new Date().toISOString(),counters:{model:0,search:0,fetch:0,rounds:0},events:[],result:{claim:submitted!.claim,checkedAt:new Date().toISOString(),verdict:{claimId:'c1',label:'Ungeklärt',summary:'Der Ort wurde geklärt; Belege fehlen im Testlauf.',reasoningItems:[],evidenceIds:[],limitations:['Synthetischer UI-Test.']},evidence:[],sources:[],chunks:[]},error:null}});
+ });
+ await page.goto('/');
+ await page.getByLabel('Dein Text').fill(original);
+ await page.getByRole('button',{name:'Behauptungen erkennen'}).click();
+ await page.getByLabel('Zu prüfende Formulierung').fill(clarified);
+ await expect(page.getByLabel('Zeitbezug (optional präzisieren)')).toHaveValue('');
+ await page.getByRole('button',{name:'Diese Aussage prüfen'}).click();
+ await expect(page.getByRole('heading',{name:'Einordnung mit Belegen.'})).toBeVisible();
+ expect(submitted?.claim).toMatchObject({normalizedText:clarified,timeScope:null});
+});

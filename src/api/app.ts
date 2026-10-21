@@ -9,6 +9,14 @@ import type {Providers} from '../tools/providers.js';
 
 interface Options {liveProviders?:Providers;ttlMs?:number;deadlineMs?:number;rateLimit?:number;globalRateLimit?:number}
 interface Session {expires:number;claims:Map<string,{claim:Claim;mode:'live'|'demo'}>;runs:Map<string,RunController>;requests:number[];extracting:boolean}
+async function extract(providers:Providers,data:unknown,timeoutMs:number){
+ const abort=new AbortController();const timer=setTimeout(()=>abort.abort(),timeoutMs);
+ let onAbort:()=>void=()=>{};
+ try{
+  const halted=new Promise<never>((_,reject)=>{onAbort=()=>reject(Error('timeout'));abort.signal.addEventListener('abort',onAbort,{once:true});});
+  return outputSchemas.extract.parse(await Promise.race([providers.model('extract',data,abort.signal),halted]));
+ }finally{clearTimeout(timer);abort.signal.removeEventListener('abort',onAbort);}
+}
 export function createApp(options:Options={}){
  const app=express();const ttl=options.ttlMs??30*60_000;const sessions=new Map<string,Session>();let globalRequests:number[]=[];
  const prune=()=>{const now=Date.now();for(const [id,s] of sessions){for(const [runId,c] of s.runs)if(Date.parse(c.run.expiresAt)<=now){c.dispose();s.runs.delete(runId);}if(s.expires<=now){s.runs.forEach(c=>c.dispose());sessions.delete(id);}}};
@@ -23,7 +31,7 @@ export function createApp(options:Options={}){
   }
   next();
  });
- app.use(express.json({limit:'40kb'}));
+ app.use(express.json({limit:'128kb'}));
  app.get('/api/config',(_req,res)=>res.json({liveAvailable:Boolean(options.liveProviders),providers:{model:'OpenAI',search:'Firecrawl',fetch:'Direkter Abruf öffentlicher Webseiten'}}));
  app.use('/api',(req,res,next)=>{
   prune();const now=Date.now();globalRequests=globalRequests.filter(t=>now-t<60_000);
@@ -51,33 +59,48 @@ export function createApp(options:Options={}){
   if(s.extracting){res.status(429).json({error:'Eine Erkennung läuft bereits.'});return;}
   if(mode==='demo'&&!getDemoCase(text)){res.status(400).json({error:'Die synthetische Demo unterstützt ausschließlich die vorbereiteten Beispiele.'});return;}
   const providers=choose(mode,text);if(!providers){res.status(503).json({error:'Live-Recherche ist nicht konfiguriert. Bitte die gekennzeichnete Demo nutzen.'});return;}
-  const abort=new AbortController();const timer=setTimeout(()=>abort.abort(),Math.min(options.deadlineMs??90_000,25_000));
-  let rejectAbort:()=>void=()=>{};
   s.extracting=true;
   try{
-   const halted=new Promise<never>((_,reject)=>{rejectAbort=()=>reject(Error('timeout'));abort.signal.addEventListener('abort',rejectAbort,{once:true});});
-   const output=outputSchemas.extract.parse(await Promise.race([providers.model('extract',{text},abort.signal),halted]));
+   const output=await extract(providers,{text},Math.min(options.deadlineMs??90_000,25_000));
    if(s.expires<=Date.now())throw Error('expired');
    s.claims.clear();
    const claims=output.claims.map((c,i)=>({...c,id:'c'+(i+1)}));
    claims.forEach(c=>s.claims.set(c.id,{claim:c,mode}));res.json({claims});
   }catch{res.status(502).json({error:'Die Behauptungserkennung war nicht verfügbar oder lieferte kein gültiges Ergebnis.'});}
-  finally{s.extracting=false;clearTimeout(timer);abort.signal.removeEventListener('abort',rejectAbort);}
+  finally{s.extracting=false;}
  });
- app.post('/api/runs',(req,res)=>{
+ app.post('/api/runs',async(req,res)=>{
+  const startedAt=Date.now();
   const parsed=z.object({claim:ClaimSchema,mode:ModeSchema}).safeParse(req.body);
   if(!parsed.success){res.status(400).json({error:'Bitte genau eine gültige Behauptung bestätigen.'});return;}
   const s:Session=res.locals.session;const {claim:input,mode}=parsed.data;const stored=s.claims.get(input.id);
   if(!stored||stored.mode!==mode){res.status(400).json({error:'Bitte die Behauptungen erneut erkennen lassen.'});return;}
   const edited=input.normalizedText!==stored.claim.normalizedText;
-  const claim:Claim={...stored.claim,normalizedText:input.normalizedText,timeScope:input.timeScope,locationScope:input.locationScope,checkability:edited?'checkable':stored.claim.checkability};
+  const claim:Claim={...stored.claim,normalizedText:input.normalizedText,timeScope:input.timeScope,locationScope:input.locationScope};
+  const providers=choose(mode,claim.normalizedText);if(!providers){res.status(503).json({error:'Live-Recherche ist nicht konfiguriert.'});return;}
+  let initialModelCalls=1;
   if(mode==='demo'&&!getDemoCase(claim.normalizedText)){res.status(400).json({error:'Die Demo kann nur vorbereitete Beispielbehauptungen wiedergeben. Eigene Änderungen benötigen den Live-Modus.'});return;}
-  if(claim.checkability==='unclear'&&!edited){res.status(400).json({error:'Bitte unklare Bezüge vor der Recherche konkretisieren.'});return;}
+  if(mode==='live'&&(edited||input.timeScope!==stored.claim.timeScope||input.locationScope!==stored.claim.locationScope)){
+   if(s.extracting){res.status(429).json({error:'Eine Erkennung läuft bereits.'});return;}
+   s.extracting=true;
+   try{
+    const rechecked=await extract(providers,{text:claim.normalizedText,providedTimeScope:input.timeScope!==stored.claim.timeScope?input.timeScope:null,providedLocationScope:input.locationScope!==stored.claim.locationScope?input.locationScope:null},Math.min(options.deadlineMs??90_000,25_000));
+    if(rechecked.claims.length!==1){res.status(400).json({error:'Bitte genau eine atomare Behauptung formulieren.'});return;}
+    const updated=rechecked.claims[0];
+    claim.checkability=updated.checkability;claim.entities=updated.entities;
+    claim.timeScope=input.timeScope!==stored.claim.timeScope?input.timeScope:updated.timeScope;
+    claim.locationScope=input.locationScope!==stored.claim.locationScope?input.locationScope:updated.locationScope;
+    initialModelCalls++;
+   }catch{res.status(502).json({error:'Die bearbeitete Behauptung konnte nicht erneut geprüft werden.'});return;}
+   finally{s.extracting=false;}
+   if(s.expires<=Date.now()){res.status(400).json({error:'Die Sitzung ist abgelaufen. Bitte erneut beginnen.'});return;}
+  }
+  if(claim.checkability==='unclear'){res.status(400).json({error:'Bitte unklare Bezüge vor der Recherche konkretisieren.'});return;}
   if(/\b(nächste[snmr]?|kommende[snmr]?)\s+(Monat|Jahr|Woche)\b/i.test(claim.normalizedText)&&!claim.timeScope?.trim()){res.status(400).json({error:'Bitte den ursprünglichen Zeitbezug als konkretes Datum ergänzen.'});return;}
   const active=(c:RunController)=>['queued','researching','evaluating'].includes(c.run.status);
   if([...s.runs.values()].filter(active).length>=2||[...sessions.values()].flatMap(v=>[...v.runs.values()]).filter(active).length>=8){res.status(429).json({error:'Es laufen bereits zu viele Recherchen.'});return;}
-  const providers=choose(mode,claim.normalizedText);if(!providers){res.status(503).json({error:'Live-Recherche ist nicht konfiguriert.'});return;}
-  const controller=new RunController(claim,mode,providers,Math.min(ttl,s.expires-Date.now()),Math.min(options.deadlineMs??90_000,90_000));s.runs.set(controller.run.id,controller);res.status(201).json(controller.run);
+
+  const controller=new RunController(claim,mode,providers,Math.min(ttl,s.expires-Date.now()),Math.max(1,Math.min(options.deadlineMs??90_000,90_000)-(Date.now()-startedAt)),initialModelCalls,startedAt);s.runs.set(controller.run.id,controller);res.status(201).json(controller.run);
  });
  app.get('/api/runs/:id',(req,res)=>{const s:Session=res.locals.session;const c=s.runs.get(req.params.id);if(!c){res.status(404).json({error:'Prüflauf nicht gefunden oder abgelaufen.'});return;}res.json(c.run);});
  app.post('/api/runs/:id/cancel',(req,res)=>{const s:Session=res.locals.session;const c=s.runs.get(req.params.id);if(!c){res.status(404).json({error:'Prüflauf nicht gefunden oder abgelaufen.'});return;}c.cancel();res.json(c.run);});

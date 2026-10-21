@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {selectPassages} from '../evidence/passages.js';
 import {outputSchemas} from '../schemas/model.js';
 import {type Claim,type Run,type Source,type SourceChunk,type Result,type Analysis} from '../schemas/contracts.js';
 import type {Providers,ModelTask} from '../tools/providers.js';
@@ -15,9 +16,9 @@ export class RunController {
  private stopped=false;
  private failures=0;
  private repaired=false;
- constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number){
+ constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number,initialModelCalls=1,startedAt?:number){
   const now=Date.now();
-  this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:1,search:0,fetch:0,rounds:0},events:[],result:null,error:null};
+  this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(startedAt??now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:initialModelCalls,search:0,fetch:0,rounds:0},events:[],result:null,error:null};
   this.event('Prüflauf angelegt');
   this.timer=setTimeout(()=>this.finishStopped('partial','Die harte Zeitgrenze wurde erreicht.'),deadlineMs);
   this.timer.unref();
@@ -46,9 +47,11 @@ export class RunController {
   this.stopped=true;clearTimeout(this.timer);this.abort.abort();this.run.status=status;
   // An unfinished evaluation is never presented as a strong verdict.
   const fallback=unresolved(this.claim,[message]);
+  if(this.analysis){fallback.evidence=this.analysis.evidence;fallback.verdict.evidenceIds=this.analysis.evidence.map(e=>e.id);fallback.verdict.limitations.push('Bereits registrierte Zitate bleiben erhalten; die abschließende Einordnung ist unvollständig.');}
   this.run.result=this.result(fallback);this.run.error=message;this.event(message);
  }
  private async collect(queries:string[]){
+  const fetchCeiling=this.run.counters.rounds===1?4:limits.fetch;
   for(const query of queries){
    this.assertActive();if(this.run.counters.search>=limits.search)break;
    if(this.queries.includes(query))continue;
@@ -57,7 +60,7 @@ export class RunController {
    try{candidates=await this.operation('search',()=>this.providers.search(query,this.abort.signal));this.event('Suche abgeschlossen');}
    catch{this.assertActive();this.failures++;this.event('Suchdienst nicht erreichbar');continue;}
    for(const candidate of candidates.slice(0,6)){
-    this.assertActive();if(this.run.counters.fetch>=limits.fetch)break;
+    this.assertActive();if(this.run.counters.fetch>=fetchCeiling)break;
     if(this.sources.some(s=>s.requestedUrl===candidate.url))continue;
     // Even unavailable URLs must be safe to render as links.
     let url:URL;try{url=new URL(candidate.url);if(!['https:','http:'].includes(url.protocol)||url.username||url.password)continue;}catch{continue;}
@@ -65,11 +68,11 @@ export class RunController {
     try{
      const page=await this.operation('fetch',()=>this.providers.fetch(candidate.url,this.abort.signal));
      const final=new URL(page.finalUrl);if(!['https:','http:'].includes(final.protocol)||final.username||final.password)throw Error('URL');
-     const text=page.text.slice(0,15000);
+     const selected=selectPassages(id,page.text,this.claim);
      const source:Source={id,requestedUrl:candidate.url,finalUrl:page.finalUrl,title:page.title,publisher:page.publisher,publishedAt:page.publishedAt,updatedAt:page.updatedAt,retrievedAt:new Date().toISOString(),provenanceGroup:final.hostname,retrievalStatus:'available',truncated:page.text.length>15000};
      this.sources.push(source);
      // Stable chunk IDs follow retrieval order; chunks preserve exact source text.
-     for(let offset=0,n=1;offset<text.length;offset+=2500,n++)this.chunks.push({id:`${id}:p${n}`,sourceId:id,text:text.slice(offset,offset+2500),sectionLabel:`Textabschnitt ${n}`});
+     this.chunks.push(...selected);
      this.event('Quelle abgerufen: '+source.title);
     }catch{
      this.assertActive();this.failures++;
@@ -100,7 +103,7 @@ export class RunController {
     const plan=outputSchemas.plan.parse(await this.model('plan',{claim:this.claim}));
     this.run.counters.rounds=1;await this.collect(plan.queries);
     this.run.status='evaluating';this.event('Belege und Zeitbezug werden geprüft');this.analysis=await this.analyze();
-    if(this.analysis.gap&&this.analysis.followUpQuery&&!this.queries.includes(this.analysis.followUpQuery)&&this.run.counters.search<limits.search&&this.run.counters.fetch<limits.fetch&&this.run.counters.model<=4){
+    if(this.analysis.gap&&this.analysis.followUpQuery&&!this.queries.includes(this.analysis.followUpQuery)&&this.run.counters.search<limits.search&&this.run.counters.fetch<limits.fetch&&this.run.counters.model<=limits.model-(this.repaired?2:3)){
      this.run.counters.rounds=2;this.run.status='researching';this.event('Weitere Belege gesucht: '+this.analysis.gap);await this.collect([this.analysis.followUpQuery]);this.run.status='evaluating';this.analysis=await this.analyze();
     }
     if(this.run.counters.model<limits.model){
@@ -110,6 +113,8 @@ export class RunController {
     }
    }
    this.assertActive();
+   if(this.analysis.gap&&!this.analysis.verdict.limitations.includes(this.analysis.gap))this.analysis.verdict.limitations.push(this.analysis.gap);
+   if(this.analysis.verdict.label==='Ungeklärt'&&!this.analysis.verdict.limitations.length)this.analysis.verdict.limitations.push('Die vorhandenen Fundstellen reichen nicht für eine abschließende Einordnung.');
    if(this.failures&&!this.chunks.length){this.run.status='failed';this.run.error='Rechercheprovider oder Quellen waren nicht erreichbar.';this.analysis=unresolved(this.claim,[this.run.error]);}
    else{this.run.status=this.failures?'partial':'completed';if(this.failures)this.analysis.verdict.limitations.push('Ein Teil der Recherche war nicht erreichbar.');}
    this.run.result=this.result(this.analysis);this.event('Ergebnis erstellt');this.stopped=true;clearTimeout(this.timer);

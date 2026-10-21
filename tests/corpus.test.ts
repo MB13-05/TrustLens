@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/api/app.js';
-import { demoCases } from '../fixtures/synthetic/index.js';
-import type { Run } from '../src/schemas/contracts.js';
+import { createDemoProviders, demoCases } from '../fixtures/synthetic/index.js';
+import type { Analysis, Run } from '../src/schemas/contracts.js';
+import type { Providers } from '../src/tools/providers.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()));
@@ -52,5 +53,34 @@ describe('independently specified synthetic corpus through HTTP', () => {
     await browser.post('/api/claims').send({ mode: 'demo', text: 'Diese unbekannte Behauptung soll geprüft werden.' }).expect(400);
     const extraction = await browser.post('/api/claims').send({ mode: 'demo', text: demoCases[0].text }).expect(200);
     await browser.post('/api/runs').send({ mode: 'demo', claim: { ...extraction.body.claims[0], normalizedText: 'Frei erfundene andere Behauptung.' } }).expect(400);
+  });
+
+  it('an intentionally wrong scripted label cannot satisfy the unchanged corpus expectation', async () => {
+    const example = demoCases.find(example => example.id === 'population-supported')!;
+    const fixtureProvider = createDemoProviders(example.text);
+    const changedProvider: Providers = {
+      ...fixtureProvider,
+      async model(task, data, signal) {
+        const output = await fixtureProvider.model(task, data, signal);
+        if (task !== 'analyze' && task !== 'repair') return output;
+        const report = output as Analysis;
+        return { ...report, verdict: { ...report.verdict, label: 'Ungeklärt', summary: 'Absichtlich abweichende synthetische Testantwort.' } };
+      },
+    };
+    // The live-adapter injection seam is used only to insert this offline test double.
+    const app = createApp({ liveProviders: changedProvider });
+    cleanups.push(app.locals.close);
+    const browser = request.agent(app);
+    const extraction = await browser.post('/api/claims').send({ mode: 'live', text: example.text }).expect(200);
+    const start = await browser.post('/api/runs').send({ mode: 'live', claim: extraction.body.claims[0] }).expect(201);
+    let run: Run = start.body;
+    const stop = Date.now() + 4000;
+    while (['queued', 'researching', 'evaluating'].includes(run.status) && Date.now() < stop) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      run = (await browser.get(`/api/runs/${run.id}`).expect(200)).body;
+    }
+    expect(run.result?.verdict.label).toBe('Ungeklärt');
+    expect(run.result?.verdict.label).not.toBe(example.expectedLabel);
+    expect(example.expectedLabel).toBe('Belegt');
   });
 });

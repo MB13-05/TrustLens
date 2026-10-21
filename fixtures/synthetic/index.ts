@@ -1,4 +1,5 @@
 import corpus from './corpus.json';
+import scriptedResponses from './model-responses.json';
 import type { Analysis, Claim, Source, SourceChunk, Verdict, Evidence } from '../../src/schemas/contracts.js';
 import { ProviderError, type Providers } from '../../src/tools/providers.js';
 
@@ -16,12 +17,18 @@ export interface DemoCase {
   expectedLabel: Verdict['label'];
   checkability: Claim['checkability'];
   timeScope: string | null;
-  summary: string;
   documents: DemoDocument[];
   knownEvidence: { document: number; quote: string; relation: Evidence['relation']; reasoning: string }[];
+}
+
+interface ScriptedResponse {
+  label: Verdict['label'];
+  summary: string;
+  evidence: { document: number; quote: string; relation: Evidence['relation']; reasoning: string }[];
   limitations: string[];
   followUpQuery?: string;
 }
+const modelResponses = scriptedResponses as Record<string, ScriptedResponse>;
 
 /** Expectations are independently recorded in the corpus, not inferred from adapter output. */
 export const demoCases = corpus as DemoCase[];
@@ -64,6 +71,7 @@ export function createDemoProviders(claimText?: string): Providers {
         return { claims: [claimFor(requireCase())] };
       }
       const item = requireCase();
+      const script = modelResponses[item.id];
       if (task === 'plan') return { queries: [`synthetic ${item.id} Originalquelle Geltungsbereich`] };
       if (task === 'verify') return { sound: true, issues: [] };
       const claim = input.claim as Claim | undefined;
@@ -72,30 +80,30 @@ export function createDemoProviders(claimText?: string): Providers {
       const chunks = (input.chunks ?? []) as SourceChunk[];
       const evidence: Evidence[] = [];
       const reasoningItems: Verdict['reasoningItems'] = [];
-      for (const expected of item.knownEvidence) {
-        const document = item.documents[expected.document];
+      for (const scripted of script.evidence) {
+        const document = item.documents[scripted.document];
         const source = sources.find(source => source.finalUrl === demoDocumentUrl(document) && source.retrievalStatus === 'available');
-        const chunk = source && chunks.find(chunk => chunk.sourceId === source.id && chunk.text.includes(expected.quote));
+        const chunk = source && chunks.find(chunk => chunk.sourceId === source.id && chunk.text.includes(scripted.quote));
         if (!source || !chunk) continue;
         const id = `e${evidence.length + 1}`;
-        evidence.push({ id, claimId: claim.id, sourceId: source.id, chunkId: chunk.id, exactQuote: expected.quote, relation: expected.relation, scopeMatch: true, limitations: ['Synthetisches fiktives Quellenmaterial.'] });
-        reasoningItems.push({ text: expected.reasoning, evidenceIds: [id] });
+        evidence.push({ id, claimId: claim.id, sourceId: source.id, chunkId: chunk.id, exactQuote: scripted.quote, relation: scripted.relation, scopeMatch: true, limitations: ['Synthetisches fiktives Quellenmaterial.'] });
+        reasoningItems.push({ text: scripted.reasoning, evidenceIds: [id] });
       }
-      const strong = ['Belegt', 'Widersprochen', 'Kontext fehlt'].includes(item.expectedLabel);
+      const strong = ['Belegt', 'Widersprochen', 'Kontext fehlt'].includes(script.label);
       const lacksEvidence = strong && evidence.length === 0;
-      const followUp = Boolean(item.followUpQuery && searches < 2);
+      const followUp = Boolean(script.followUpQuery && searches < 2);
       const result: Analysis = {
         evidence,
         verdict: {
           claimId: claim.id,
-          label: lacksEvidence ? 'Ungeklärt' : item.expectedLabel,
-          summary: lacksEvidence ? 'Die bislang registrierten synthetischen Quellen reichen für eine belastbare Einordnung noch nicht aus.' : item.summary,
+          label: lacksEvidence ? 'Ungeklärt' : script.label,
+          summary: lacksEvidence ? 'Die bislang registrierten synthetischen Quellen reichen für eine belastbare Einordnung noch nicht aus.' : script.summary,
           reasoningItems,
           evidenceIds: evidence.map(e => e.id),
-          limitations: [...item.limitations, ...(lacksEvidence ? ['Der entscheidende Geltungsbereich wurde noch nicht abgerufen.'] : [])],
+          limitations: [...script.limitations, ...(lacksEvidence ? ['Der entscheidende Geltungsbereich wurde noch nicht abgerufen.'] : [])],
         },
         gap: followUp ? (item.id === 'bike-context' ? 'Der zeitliche Geltungsbereich fehlt im fiktiven Kurztext; benötigt wird die vollständige Marktverordnung.' : 'Es fehlt ein verbindlicher Beschluss mit Umsetzungsnachweis für 2030.') : null,
-        followUpQuery: followUp ? item.followUpQuery! : null,
+        followUpQuery: followUp ? script.followUpQuery! : null,
       };
       return result;
     },

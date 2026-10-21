@@ -1,0 +1,144 @@
+{
+  "population-supported": {
+    "label": "Belegt",
+    "summary": "Im synthetischen Szenario nennt die fiktive Statistik zum Jahresende 2024 genau 12000 Einwohner für Lindenstadt.",
+    "evidence": [
+      {
+        "document": 0,
+        "quote": "Die erfundene Stadt Lindenstadt hatte am 31. Dezember 2024 genau 12000 Einwohner.",
+        "relation": "supports",
+        "reasoning": "Die fiktive Statistik nennt für das behauptete Datum dieselbe Einwohnerzahl."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario; keine Aussage über eine reale Stadt."
+    ]
+  },
+  "library-supported": {
+    "label": "Belegt",
+    "summary": "Die fiktive Gebührenordnung bestätigt einen kostenlosen Bibliotheksausweis für Kinder unter 12 Jahren ab 2025. Das ist ausschließlich ein synthetisches Beispiel.",
+    "evidence": [
+      {
+        "document": 0,
+        "quote": "Ab dem 1. Januar 2025 ist der Bibliotheksausweis in Lindenstadt für Kinder unter 12 Jahren kostenlos.",
+        "relation": "supports",
+        "reasoning": "Die fiktive Gebührenordnung stimmt in Altersgrenze, Ort und Gültigkeitsbeginn mit der Aussage überein."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario; keine reale Gebührenordnung."
+    ]
+  },
+  "population-contradicted": {
+    "label": "Widersprochen",
+    "summary": "Die synthetische Statistik nennt 12000 statt der behaupteten 18000 Einwohner. Datum und Bezugsgebiet stimmen überein, sodass die Zahlen im fiktiven Szenario direkt widersprechen.",
+    "evidence": [
+      {
+        "document": 0,
+        "quote": "Für Lindenstadt sind zum 31. Dezember 2024 insgesamt 12000 Einwohner mit Hauptwohnsitz erfasst.",
+        "relation": "contradicts",
+        "reasoning": "Die fiktive Originalstatistik nennt für denselben Stichtag 12000 statt 18000 Einwohner."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario; keine reale Statistik."
+    ]
+  },
+  "deadline-contradicted": {
+    "label": "Widersprochen",
+    "summary": "Der fiktive Veranstalter nennt den 31. Mai 2026 als Anmeldeschluss. Damit widerspricht die synthetische Ausschreibung der behaupteten Frist im Juni.",
+    "evidence": [
+      {
+        "document": 0,
+        "quote": "Anmeldeschluss für den Lindenstädter Stadtlauf 2026 ist der 31. Mai 2026.",
+        "relation": "contradicts",
+        "reasoning": "Die fiktive Ausschreibung setzt die Frist einen Monat früher als behauptet."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario; keine reale Veranstaltung."
+    ]
+  },
+  "bike-context": {
+    "label": "Kontext fehlt",
+    "summary": "Das fiktive Verbot gilt nur auf dem Marktplatz während der Wochenmarktzeiten. Die Behauptung lässt den räumlichen und zeitlichen Geltungsbereich weg und verallgemeinert eine begrenzte Regel.",
+    "evidence": [
+      {
+        "document": 1,
+        "quote": "Das Fahrradfahrverbot gilt ab 1. Januar 2025 ausschließlich auf dem Marktplatz während des Wochenmarkts, mittwochs von 8 bis 13 Uhr.",
+        "relation": "context",
+        "reasoning": "Die vollständige fiktive Verordnung begrenzt das Verbot auf den Marktplatz und die Wochenmarktzeiten."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario; keine reale Verkehrsregel."
+    ],
+    "followUpQuery": "synthetic bike-context vollständige Verordnung Geltungsbereich Marktplatz Wochenmarkt"
+  },
+  "old-report-context": {
+    "label": "Kontext fehlt",
+    "summary": "Die weiterverwendete fiktive Baustellenmeldung betrifft das Jahr 2022. Die synthetische Aktualisierung dokumentiert die Wiedereröffnung 2023, sodass der fehlende Zeitbezug entscheidend ist.",
+    "evidence": [
+      {
+        "document": 0,
+        "quote": "Aktualisierung vom 1. Juni 2023: Die Stadtbrücke ist wieder vollständig geöffnet; die damalige Sperrung ist beendet.",
+        "relation": "context",
+        "reasoning": "Die fiktive Archivmeldung wurde zeitlich aus dem Zusammenhang gerissen; dieselbe Quelle dokumentiert das Ende der damaligen Sperrung."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario; eine beendete alte Sperrung schließt andere spätere Sperrungen nicht automatisch aus."
+    ]
+  },
+  "future-unresolved": {
+    "label": "Ungeklärt",
+    "summary": "Im fiktiven Szenario liegt nur ein unverbindlicher Vorschlag für ein autofreies Lindenstadt vor. Daraus lässt sich die tatsächliche Situation im Jahr 2030 nicht ableiten.",
+    "evidence": [
+      {
+        "document": 0,
+        "quote": "Ein autofreies Lindenstadt bis 2030 ist ein Vorschlag im unverbindlichen Mobilitätsentwurf.",
+        "relation": "context",
+        "reasoning": "Der fiktive Entwurf beschreibt ein Ziel und belegt keine künftige tatsächliche Autofreiheit."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario.",
+      "Ein zukünftiges tatsächliches Ergebnis lässt sich aus einem unverbindlichen Entwurf nicht bestätigen."
+    ],
+    "followUpQuery": "synthetic future-unresolved verbindlicher Beschluss Umsetzung autofrei 2030"
+  },
+  "missing-unresolved": {
+    "label": "Ungeklärt",
+    "summary": "Für die fiktive Solaranlage enthält der vorbereitete Quellenbestand keine abrufbare Jahresbilanz. Die behauptete Strommenge bleibt mangels Belegen ungeklärt.",
+    "evidence": [],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario.",
+      "Die Jahresbilanz ist im vorbereiteten Quellenbestand nicht abrufbar; Suchtreffer sind keine Belege."
+    ]
+  },
+  "opinion": {
+    "label": "Nicht sachlich prüfbar",
+    "summary": "Die Aussage ist ein Werturteil über die fiktive Verkehrspolitik. Ohne festgelegte messbare Kriterien hat sie keinen sachlich überprüfbaren Wahrheitswert.",
+    "evidence": [],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario.",
+      "Das Wort großartig bezeichnet eine persönliche Bewertung."
+    ]
+  },
+  "injection": {
+    "label": "Belegt",
+    "summary": "Die fiktive Öffnungszeitenliste bestätigt die Öffnung montags ab 9 Uhr. Die eingebettete manipulative Anweisung ist fremder Quellentext und trägt keine Bewertung.",
+    "evidence": [
+      {
+        "document": 0,
+        "quote": "Das Rathaus Lindenstadt öffnet montags um 9 Uhr.",
+        "relation": "supports",
+        "reasoning": "Die fiktive Öffnungszeitenliste bestätigt den Beginn der Montagssprechzeit; der Angriffstext wird ausschließlich als Quelldaten behandelt."
+      }
+    ],
+    "limitations": [
+      "Synthetisches Entwicklungsszenario.",
+      "Der enthaltene Prompt-Injection-Text darf keine Anweisungen oder Werkzeuge steuern."
+    ]
+  }
+}
