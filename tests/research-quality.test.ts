@@ -172,3 +172,26 @@ describe('technical failures versus honest uncertainty',()=>{
   expect(run.result.verdict.reasoningItems).toEqual([]);
  });
 });
+
+describe('live progress',()=>{
+ it('lists the sources found so far while the run is still evaluating',async()=>{
+  let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});
+  const urls=[...Object.keys(PAGES),'https://nicht-erreichbar.example/seite'];
+  const {providers}=setup(async(task,data)=>{if(task==='analyze')await gate;return baseModel()(task,data);},urls);
+  const app=createApp({liveProviders:providers});disposals.push(app.locals.close);const agent=request.agent(app);
+  await agent.post('/api/claims').send({text:claim.originalText,mode:'live'}).expect(200);
+  const started=(await agent.post('/api/runs').send({claim,mode:'live'}).expect(201)).body;
+  let state=started;
+  for(let i=0;i<200&&!(state.status==='evaluating'&&state.found.length===4);i++){await new Promise(r=>setTimeout(r,10));state=(await agent.get('/api/runs/'+started.id)).body;}
+  expect(state.result).toBeNull();
+  expect(state.found).toEqual([
+   {id:'s1',title:'Die Berliner Mauer',publisher:'www.stiftung-berliner-mauer.de',url:'https://www.stiftung-berliner-mauer.de/de/themen/die-berliner-mauer',status:'available'},
+   {id:'s2',title:'Fall of the Berlin Wall',publisher:'en.wikipedia.org',url:'https://en.wikipedia.org/wiki/Fall_of_the_Berlin_Wall',status:'available'},
+   {id:'s3',title:'Fall der Berliner Mauer',publisher:'www.lpb-bw.de',url:'https://www.lpb-bw.de/fall-der-berliner-mauer',status:'available'},
+   {id:'s4',title:'https://nicht-erreichbar.example/seite',publisher:'nicht-erreichbar.example',url:'https://nicht-erreichbar.example/seite',status:'unavailable'},
+  ]);
+  release();
+  const done=await (async()=>{for(let i=0;i<200;i++){const next=(await agent.get('/api/runs/'+started.id)).body;if(next.result)return next;await new Promise(r=>setTimeout(r,10));}throw Error('no result');})();
+  expect(done.found).toHaveLength(4);
+ });
+});

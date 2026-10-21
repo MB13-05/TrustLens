@@ -20,7 +20,7 @@ export class RunController {
  private technicalNotes:string[]=[];
  constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number,initialModelCalls=1,startedAt?:number,private input?:InputOrigin){
   const now=Date.now();
-  this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(startedAt??now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:initialModelCalls,search:0,fetch:0,rounds:0},events:[],result:null,error:null};
+  this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(startedAt??now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:initialModelCalls,search:0,fetch:0,rounds:0},events:[],found:[],result:null,error:null};
   this.event('Prüflauf angelegt');
   this.timer=setTimeout(()=>this.finishStopped('partial','Die harte Zeitgrenze wurde erreicht.'),deadlineMs);
   this.timer.unref();
@@ -72,13 +72,14 @@ export class RunController {
      const final=new URL(page.finalUrl);if(!['https:','http:'].includes(final.protocol)||final.username||final.password)throw Error('URL');
      const selected=selectPassages(id,page.text,this.claim);
      const source:Source={id,requestedUrl:candidate.url,finalUrl:page.finalUrl,title:page.title,publisher:page.publisher,publishedAt:page.publishedAt,updatedAt:page.updatedAt,retrievedAt:new Date().toISOString(),provenanceGroup:final.hostname,retrievalStatus:'available',truncated:page.text.length>15000};
-     this.sources.push(source);
+     this.sources.push(source);this.run.found.push({id,title:source.title,publisher:source.publisher,url:source.finalUrl,status:'available'});
      // Stable chunk IDs follow retrieval order; chunks preserve exact source text.
      this.chunks.push(...selected);
      this.event('Quelle abgerufen: '+source.title);
     }catch{
      this.assertActive();this.failures++;
      this.sources.push({id,requestedUrl:candidate.url,finalUrl:candidate.url,title:candidate.title,publisher:url.hostname,publishedAt:null,updatedAt:null,retrievedAt:new Date().toISOString(),provenanceGroup:url.hostname,retrievalStatus:'unavailable',truncated:false});
+     this.run.found.push({id,title:candidate.title,publisher:url.hostname,url:candidate.url,status:'unavailable'});
      this.event('Quelle nicht abrufbar: '+url.hostname);
     }
    }

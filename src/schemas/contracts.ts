@@ -16,4 +16,6 @@ export interface InputOrigin {kind:'text'|'image'|'post';platform?:'instagram'|'
 /** `technicalNotes` are software limits (failed evaluation steps); research limits belong in `verdict.limitations`. */
 export interface Result {claim:Claim;checkedAt:string;verdict:Verdict;evidence:Evidence[];sources:Source[];chunks:SourceChunk[];technicalNotes:string[];input?:InputOrigin}
 export type Status='queued'|'researching'|'evaluating'|'completed'|'partial'|'failed'|'cancelled';
-export interface Run {id:string;mode:'live'|'demo';status:Status;createdAt:string;expiresAt:string;deadlineAt:string;counters:{model:number;search:number;fetch:number;rounds:number};events:{id:string;at:string;message:string}[];result:Result|null;error:string|null}
+/** A source the run has registered so far; shown while the run is still working. */
+export interface FoundSource {id:string;title:string;publisher:string;url:string;status:'available'|'unavailable'}
+export interface Run {id:string;mode:'live'|'demo';status:Status;createdAt:string;expiresAt:string;deadlineAt:string;counters:{model:number;search:number;fetch:number;rounds:number};events:{id:string;at:string;message:string}[];found:FoundSource[];result:Result|null;error:string|null}
