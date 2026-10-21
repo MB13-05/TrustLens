@@ -11,6 +11,11 @@ export const AnalysisSchema=z.object({evidence:z.array(EvidenceSchema),verdict:V
 export type Analysis=z.infer<typeof AnalysisSchema>;
 export interface Source {id:string;requestedUrl:string;finalUrl:string;title:string;publisher:string;publishedAt:string|null;updatedAt:string|null;retrievedAt:string;provenanceGroup:string;retrievalStatus:'available'|'unavailable';truncated:boolean}
 export interface SourceChunk {id:string;sourceId:string;text:string;sectionLabel:string}
-export interface Result {claim:Claim;checkedAt:string;verdict:Verdict;evidence:Evidence[];sources:Source[];chunks:SourceChunk[]}
+/** The user-supplied input a check started from. A post or image is the claim's origin, never independent evidence. */
+export interface InputOrigin {kind:'text'|'image'|'post';platform?:'instagram'|'tiktok';url?:string;author?:string|null;scope?:'caption';edited:boolean}
+/** `technicalNotes` are software limits (failed evaluation steps); research limits belong in `verdict.limitations`. */
+export interface Result {claim:Claim;checkedAt:string;verdict:Verdict;evidence:Evidence[];sources:Source[];chunks:SourceChunk[];technicalNotes:string[];input?:InputOrigin}
 export type Status='queued'|'researching'|'evaluating'|'completed'|'partial'|'failed'|'cancelled';
-export interface Run {id:string;mode:'live'|'demo';status:Status;createdAt:string;expiresAt:string;deadlineAt:string;counters:{model:number;search:number;fetch:number;rounds:number};events:{id:string;at:string;message:string}[];result:Result|null;error:string|null}
+/** A source the run has registered so far; shown while the run is still working. */
+export interface FoundSource {id:string;title:string;publisher:string;url:string;status:'available'|'unavailable'}
+export interface Run {id:string;mode:'live'|'demo';status:Status;createdAt:string;expiresAt:string;deadlineAt:string;counters:{model:number;search:number;fetch:number;rounds:number};events:{id:string;at:string;message:string}[];found:FoundSource[];result:Result|null;error:string|null}

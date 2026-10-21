@@ -1,6 +1,6 @@
 # TrustLens
 
-Deutschsprachiger Recherche-Prototyp: Text eingeben, bis zu drei Behauptungen erkennen, genau eine bestätigen, Quellen recherchieren und eine belegte Einordnung lesen. Maßgebliche Spezifikation: [PLAN.md](PLAN.md).
+Deutschsprachiger Recherche-Prototyp: Text, Bild oder öffentlichen Instagram-/TikTok-Link eingeben, bis zu drei Behauptungen erkennen, genau eine bestätigen, Quellen recherchieren und eine belegte Einordnung lesen. Maßgebliche Spezifikation: [PLAN.md](PLAN.md).
 
 ## Lokal starten
 
@@ -55,14 +55,39 @@ Beispielrechnung für insgesamt 50.000 Eingabe- und 5.000 Ausgabetokens über al
 ```bash
 npm run typecheck
 npm run build
-npm test
+npm test                     # Vitest: Logik, HTTP, Netzwerk, Eingabewege
 npx playwright install chromium
-npm run test:e2e
+npm run test:e2e             # Browser: Desktop, iPhone 13 und 320 px breit
+npm run smoke:live           # optional, echte Provider, braucht Schlüssel in .env
 ```
 
-HTTP-Tests benötigen die Berechtigung, lokale Ports zu öffnen. Playwright prüft Desktop und mobile Chromium-Ansichten. In minimalen Linux-Systemen können zusätzlich Chromium-Systembibliotheken erforderlich sein. Fixture-Tests verwenden keine Provider-Zugangsdaten.
+HTTP-Tests benötigen die Berechtigung, lokale Ports zu öffnen. Playwright startet zwei Server: den normalen Dev-Server (synthetische Demo) und `tests/e2e-server.ts`, der die echte Oberfläche und API im Live-Modus mit deterministischen Fixture-Adaptern betreibt (keine Schlüssel, kein Netzwerk, keine Kosten). Die Browsertests prüfen Abläufe, horizontales Überlaufen, Tastaturbedienung und mit axe-core automatisch erkennbare WCAG-2-AA-Verstöße (einschließlich Kontrast). Manuell geprüft werden Screenshots; ein Screenreader-Test steht aus.
 
-Abgedeckt sind ungültige/verwaiste Referenzen, erfundene Zitate, fehlende/widersprüchliche Evidenz, inhaltliche Gegenprüfung, Korrekturgrenze, Budgets, harte Deadline, Abbruch einschließlich verspäteter Antworten, Provider-Ausfall, Sitzungsisolation/TTL, Rate-Limits, DNS-/IP-/Redirect-Schutz und der Browserablauf. Der [synthetische Korpus](fixtures/synthetic/corpus.json) enthält zehn unabhängig beschriebene Erwartungen. Er misst deterministisches Anwendungsverhalten, keine Modellgenauigkeit auf echten Nachrichten. Review- und Prüfergebnisse stehen in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
+Abgedeckt sind unter anderem: Mauerfall-Muster mit umformatierten Zitaten, falsches Datum, widersprüchliche Quellen, fehlender Kontext, berechtigt ungeklärte Fälle ohne Verifier-Fehlermeldung, technische Fehler getrennt von Beleglücken, ungültige/erfundene Zitate und die konkrete Rückmeldung an die Korrektur, Bildvalidierung (Format, Größe, Pixel, Metadaten), OCR-Fehler und Textkorrektur, Post-Link-Formate, gesperrte Posts und gefährliche Redirects, Abbruch, Deadline, Budgets, Sitzungsisolation und Löschung. Der [synthetische Korpus](fixtures/synthetic/corpus.json) enthält zehn unabhängig beschriebene Erwartungen. Er misst deterministisches Anwendungsverhalten, keine Modellgenauigkeit auf echten Nachrichten. Prüfergebnisse stehen in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
+
+## Eingabewege
+
+**Text** funktioniert in Demo und Live. **Bild** und **Post-Link** gibt es nur im Live-Modus, und beide zeigen den gewonnenen Text zur Korrektur und Bestätigung, bevor irgendetwas bewertet wird. Aus einem Link allein wird nie eine Behauptung abgeleitet.
+
+### Bild (Screenshot oder Foto mit Text)
+
+- Formate **JPEG, PNG, WebP**; höchstens **6 MB** und **25 Megapixel**; Seitenlänge mindestens 32 px. Geprüft wird serverseitig am tatsächlichen Inhalt (nicht am gemeldeten Typ); GIF, SVG, animierte und beschädigte Dateien werden abgelehnt.
+- Das Bild wird gemäß EXIF gedreht, auf höchstens 2000 px Kantenlänge verkleinert und neu kodiert. Dabei entfallen alle Metadaten (EXIF, GPS, XMP). Es wird nur im Arbeitsspeicher verarbeitet und nicht gespeichert; zum Browser wird es nicht zurückgesendet.
+- Texterkennung über das bereits konfigurierte Modell (OpenRouter `image_url` als Base64-Data-URL, direkter OpenAI-Zugang `input_image`; beide Standardmodelle akzeptieren Bilder). Der Text ist maximal 8.000 Zeichen und strukturiert (`legible`, `text`). Unleserliche Bilder erzeugen einen verständlichen Hinweis mit Ausweichweg „Text einfügen“.
+- Kosten-, Aufruf- und Zeitgrenzen: höchstens **6 Bildanalysen pro Sitzung** (jeder Anbieteraufruf zählt, auch ein fehlgeschlagener), ein Aufruf gleichzeitig, **45 Sekunden** Zeitgrenze, höchstens 5.000 Ausgabetokens, zusätzlich die Schreib-Ratenlimits.
+
+### Post-Link (Instagram, TikTok)
+
+| Typ | Unterstützt | Wie gelesen | Grenzen |
+| --- | --- | --- | --- |
+| TikTok-Video (`tiktok.com/@name/video/…`, `vm.`/`vt.tiktok.com/…`, `tiktok.com/t/…`) | ja | öffentliche oEmbed-Schnittstelle von TikTok, liefert Beschreibung und Autor | nur die Beschreibung; Foto-Beiträge, Profile, Suche nicht; die Schnittstelle kann Anfragen begrenzen („ratelimit“) |
+| Instagram-Beitrag oder Reel (`/p/…`, `/reel/…`, `/tv/…`) | nur wenn öffentlich abrufbar | anonymer Abruf der öffentlichen Seite wie bei einer Link-Vorschau, gelesen werden nur die Open-Graph-Metadaten (Beschreibung) | Instagram verlangt häufig eine Anmeldung oder blockiert Automaten; dann gilt der Beitrag als nicht zugänglich. Stories, Profile, Suchseiten nicht |
+
+- Kurzlinks und Weiterleitungen werden bei jedem Schritt wie alle Abrufe geprüft (öffentliche IP, gebunden an die geprüfte Adresse) und dürfen die Plattform-Hosts nie verlassen; ein Sprung zu einer fremden oder internen Adresse wird nicht kontaktiert. Weiterleitungen auf Anmeldeseiten werden nicht verfolgt.
+- Es wird nichts umgangen: keine Anmeldung, keine Cookies, kein Vortäuschen eines anderen Clients, keine privaten Beiträge. Bei Sperre, Rate-Limit oder fehlender Beschreibung zeigt die Oberfläche den Grund und bietet **Screenshot** oder **eingefügten Text** als direkten Ausweichweg an.
+- **Gelesen wird ausschließlich die Beschreibung.** Video, Bild, Ton und Untertitel werden nicht ausgewertet; Transkripte werden nicht abgerufen. Das steht vor der Prüfung und im Ergebnis. Der Beitrag gilt als **Eingabe, nicht als unabhängiger Beleg** und taucht nie in den Quellen oder Belegen auf.
+- **Plattformbedingungen:** Instagrams offizielle oEmbed-Schnittstelle erlaubt ausdrücklich nur die Einbettung und verbietet das Auswerten der Inhalte; sie wird deshalb nicht verwendet. Der anonyme Seitenabruf ist ein Vorschau-Abruf einzelner, von dir eingegebener Links. Ob das für deinen Einsatz mit den Bedingungen der Plattform vereinbar ist, musst du selbst prüfen; für öffentlichen Betrieb ist eine Freigabe oder ein anderer Weg nötig. Die TikTok-Schnittstelle und das Instagram-Verhalten konnten in dieser Umgebung nicht gegen echte Beiträge abgenommen werden (TikTok antwortete auf einen älteren Dokumentationslink mit „ratelimit triggered“, was als vorübergehend behandelt wird).
+
 
 ## Verträge und Laufgrenzen
 
@@ -70,7 +95,10 @@ Abgedeckt sind ungültige/verwaiste Referenzen, erfundene Zitate, fehlende/wider
 - `POST /api/runs` mit `{claim, mode}` → Lauf mit ID.
 - `GET /api/runs/:id` → Zustand, Ereignisse und Ergebnis.
 - `POST /api/runs/:id/cancel` → gestoppter Lauf.
-- `GET /api/config` → Provider-Namen und Live-Verfügbarkeit, keine Schlüssel.
+- `GET /api/config` → Provider-Namen, Live-Verfügbarkeit und `inputs` (verfügbare Eingabewege samt Grenzen), keine Schlüssel.
+- `POST /api/inputs/image` (Rohdaten mit Bild-Content-Type) → `{inputId, text, legible, image, notice}` oder 400/413/422/429/502 mit deutscher `error`-Meldung.
+- `POST /api/inputs/post` mit `{url}` → `{inputId, platform, url, author, text, scope:"caption", notice}`; 422 mit `reason` und `fallback:["image","text"]`, wenn der Beitrag nicht lesbar ist.
+- `POST /api/claims` akzeptiert zusätzlich `source:{inputId}`; `Result.input` kennzeichnet Herkunft (`text`/`image`/`post`) und ob der Text korrigiert wurde. `Result.technicalNotes` enthält technische Einschränkungen getrennt von `verdict.limitations`; `Run.found` listet die bisher gefundenen Quellen.
 
 `mode` ist `live` oder `demo`. Felder und Labels entsprechen [src/schemas/contracts.ts](src/schemas/contracts.ts). Ergebnisse unterscheiden `Belegt`, `Widersprochen`, `Kontext fehlt`, `Ungeklärt` und `Nicht sachlich prüfbar`. Es gibt keinen Wahrheitswert in Prozent.
 
@@ -84,8 +112,8 @@ Abrufe erlauben ausschließlich HTTP/HTTPS mit Standardports, prüfen DNS und s�
 
 Die Demo verwendet ausschließlich **fiktive Organisationen und Dokumente** unter `demo.trustlens.invalid`; diese Links sind bewusst keine erreichbaren Originalquellen. Sie wird überall als synthetisch markiert. Es liegen noch keine manuell geprüften echten Demoaufzeichnungen vor. Siehe [fixtures/demo/README.md](fixtures/demo/README.md).
 
-Live-Adapter sind vollständig implementiert und mit Provider-Vertragsfixtures getestet. **Mangels Schlüsseln wurde weder ein echter OpenRouter-/OpenAI-Modell-/Suchlauf noch eine fachliche Live-Abnahme durchgeführt.** Eine manuelle Bewertung echter Quellen, Kosten-/Latenzmessung und eine geprobte Drei-Minuten-Präsentation stehen aus. Die zehn synthetischen Fälle sind keine Evidenz für eine allgemeine Erkennungsrate.
+Live-Adapter sind mit Provider-Vertragsfixtures getestet. **In der Entwicklungsumgebung dieser Änderung standen keine Schlüssel zur Verfügung: Es wurden weder ein echter Modell-/Suchlauf noch eine echte OCR- oder Post-Abnahme ausgeführt.** Das Skript `npm run smoke:live` prüft die echte Kette begrenzt, sobald Schlüssel in `.env` stehen. Die Abruf- und Textabschnittslogik wurde gegen echte Seiten (Stiftung Berliner Mauer, Wikipedia) geprüft. Eine manuelle Bewertung echter Quellen, Kosten-/Latenzmessung und eine geprobte Drei-Minuten-Präsentation stehen aus. Die zehn synthetischen Fälle sind keine Evidenz für eine allgemeine Erkennungsrate.
 
 Der direkte Abruf unterstützt öffentliche HTML-/Textseiten; JavaScript-only-Seiten, PDFs, Paywalls, komprimierte Antworten und Bot-Sperren können unzugänglich bleiben. Ein ehrliches Teilresultat nennt diese Grenzen. Veröffentlichungsdaten stammen, falls vorhanden, aus Seitenmetadaten; ihr Fehlen bleibt `null`. Herkunftsgruppen verwenden konservativ die Domain und behaupten keine Unabhängigkeit; ein gemeinsamer Ursprung über unterschiedliche Domains wird derzeit nur durch die Beleganalyse erkannt. Wörtliche Zitierprüfung beweist keine inhaltliche Folgerichtigkeit; auch die separate Modellprüfung kann Fehler machen.
 
-Keine Konten, Datenbank, Screenshots, URL-Eingabe oder öffentliche Historie. Der flüchtige Einprozess-Server ist für lokale Erprobung gedacht. Öffentliche Bereitstellung benötigt zusätzlich HTTPS, Prüfung der Anbieterbedingungen und eine zur Infrastruktur passende gemeinsame Raten-/Sitzungsverwaltung. Es wurde nichts veröffentlicht.
+Keine Konten, Datenbank oder öffentliche Historie. Es gibt keine Artikel-URL-Eingabe und keine Auswertung von Video, Ton oder Deepfakes. Bilder und Posts nur im Live-Modus. Der flüchtige Einprozess-Server ist für lokale Erprobung gedacht. Öffentliche Bereitstellung benötigt zusätzlich HTTPS, Prüfung der Anbieter- und Plattformbedingungen und eine zur Infrastruktur passende gemeinsame Raten-/Sitzungsverwaltung. Es wurde nichts veröffentlicht.

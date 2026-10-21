@@ -62,3 +62,39 @@ Offizielle Grundlagen:
 - [Gemini 2.5 Flash](https://openrouter.ai/google/gemini-2.5-flash) und [Flash-Lite](https://openrouter.ai/google/gemini-2.5-flash-lite)
 
 Nach der Erweiterung: 90 Vitest-Prüfungen, 16 Desktop-/Mobil-Browserprüfungen, Typprüfung und Build erfolgreich. OpenRouter- und Firecrawl-Schlüssel fehlen weiterhin; Provider-Verträge wurden mit kontrollierten HTTP-Antworten geprüft, keine Credits verbraucht. Ein fachlicher Live-Test und tatsächliche Kostenmessungen bleiben ausstehend.
+
+## Recherchequalität, neue Eingabewege und Oberfläche (Branch `feat/research-quality-ui-inputs`)
+
+### Ursache des Fehlers „Ungeklärt ohne Belege“ (Mauerfall)
+
+Reproduziert mit `tests/research-quality.test.ts` (Fake-Modell, das aus den übergebenen Abschnitten zitiert und als Prüfer die beobachtete englische Beanstandung liefert). Die Verarbeitungskette selbst war nicht die Ursache: Abruf, Textextraktion und Abschnittsauswahl liefern für die echten Seiten (Stiftung Berliner Mauer, Wikipedia) die Datumsstelle in den ausgewählten Abschnitten.
+
+1. **Auslöser:** `validateReport` verlangte, dass `exactQuote` byteweise in einem Abschnitt steht. Modelle tippen Zitate mit anderen Leerzeichen/Zeilenumbrüchen und typografischen Anführungszeichen neu ab, setzten Anführungszeichen um das Zitat oder zitierten über eine Abschnittsgrenze; außerdem scheiterte der Bericht, wenn `verdict.evidenceIds` nicht alle in `reasoningItems` genutzten IDs enthielt. Die Korrektur erhielt nur den Pauschaltext „Schema, Belegverweise oder wörtliche Zitate ungültig“ und scheiterte aus demselben Grund erneut.
+2. **Verstärker (die eigentliche Fehlanzeige):** Danach entstand ein Ersatzbericht „Ungeklärt“ mit leeren `reasoningItems`. Dieser **Systemfehler-Ersatz wurde an den unabhängigen Prüfer gesendet**. Der beanstandete die leere Liste (englisch: „The 'reasoningItems' in the 'verdict' are empty…“), und der Controller ersetzte den **gesamten** Bericht durch diese Beanstandung. Ergebnis: kein Beleg, keine Begründung, englische interne Meldung als scheinbare Beleglücke. Dasselbe passierte auch bei einem legitimen „Ungeklärt“ mit leeren Begründungen; die eigenen Einschränkungen des Modells gingen verloren. Fiel der Prüfer aus, wurde sogar ein gültiger Bericht verworfen.
+3. Welche der unter 1. genannten Ursachen im konkreten Live-Lauf zuerst auftrat, ließ sich ohne die Schlüssel in dieser Umgebung nicht beobachten. Die Behebung deckt alle ab; die Prüfung der echten Seiten bestätigte, dass Zitate typischerweise umgebrochene Zeilen und typografische Anführungszeichen enthalten.
+
+### Behebung
+
+- Prüfer läuft nur für **starke Urteile** (Belegt, Widersprochen, Kontext fehlt), nie für einen Systemersatz. Ein berechtigtes „Ungeklärt“ bleibt mit seinen Einschränkungen bestehen. Prüfer-Ausfall zieht das starke Urteil zurück, behält aber die registrierten Belege. Inhaltliche Einwände des Prüfers werden als Einschränkungen angezeigt, Belege bleiben sichtbar.
+- Technische Ausfälle stehen in `Result.technicalNotes` und führen zu Status `partial`; sie erscheinen nie als Recherchegrenze in `verdict.limitations`.
+- `src/evidence/quotes.ts`: Zitate werden unabhängig von Leerraum, Anführungszeichen-Stil, Strichen, Weichtrennung und äußeren Anführungszeichen gefunden; gespeichert wird immer die **wörtliche Quellenstelle**. Ziffern, Buchstaben und Groß-/Kleinschreibung müssen exakt stimmen. Ein falsch angegebener Abschnitt derselben Quelle wird korrigiert, ein Zitat aus einer anderen Quelle bleibt ungültig.
+- `validateReport` sammelt **alle** Beanstandungen konkret (Beleg-ID, Zitatanfang, gültige Quellen/Abschnitte) und gibt sie der einen Korrektur als `issues`. Herabstufungen ersetzen die Zusammenfassung durch einen neutralen Satz.
+- Abschnitte (`passages.ts`) enden an Zeilen-/Satzgrenzen, Zeit- und Ortsbezug zählen bei der Auswahl, Quellen verschiedener Hosts kommen zuerst. Der Abruf beachtet den Zeichensatz, entfernt Navigations-/Zitatmarker und erlaubt NAT64-Adressen (`64:ff9b::/96`) nur, wenn die eingebettete IPv4-Adresse öffentlich ist (auf DNS64-Netzen, wie in dieser Umgebung, scheiterten sonst alle Abrufe mit „DNS-Ziel ist nicht öffentlich“).
+
+### Neue Eingabewege
+
+`src/inputs/image.ts` (Prüfung und Bereinigung), `src/inputs/post.ts` (URL-Prüfung, Reader), `src/api/inputs.ts` (Routen, Grenzen). `Providers.readImage` ist optional, damit bestehende Adapter unverändert bleiben. Grenzen und Plattformverhalten: siehe README, Abschnitt „Eingabewege“.
+
+Geprüfte Dokumentation: OpenRouter Image Inputs (Chat Completions, `image_url`, Base64-Data-URL, Bilder nach dem Text) und Modellseiten (beide Gemini-Standardmodelle: Eingabe `image`), OpenAI Images & Vision (`input_image`), Instagram oEmbed (Bedingungen: nur Einbettung), TikTok oEmbed. Firecrawl unterstützt TikTok nicht.
+
+### Oberfläche
+
+Neu in Komponenten aufgeteilt (`src/ui/`). Eingabe mit Modus-Auswahl (Live/Demo deutlich unterscheidbar), Tabs Text/Bild/Post-Link, Fortschritt mit echten Ereignissen und gefundenen Quellen (ohne Prozentwerte), Ergebnis mit Erklärung, nummerierten Belegkarten, getrennten Hinweisen (Quellenkonflikt, fehlende Fundstellen, technische Einschränkung), „Was offenbleibt“, nächsten Schritten und Detailbereich für IDs/Metadaten.
+
+### Tatsächlich ausgeführte Prüfungen (Stand dieser Änderung)
+
+- Typprüfung und Vite-Produktionsbuild erfolgreich.
+- 232 Vitest-Prüfungen erfolgreich (vorher 90).
+- 65 Playwright-Prüfungen erfolgreich (4 Desktop-Tests auf Mobil bewusst übersprungen), jeweils Desktop, iPhone 13 und 320 px; darin axe-core WCAG 2 A/AA ohne Verstöße, kein horizontales Überlaufen.
+- Screenshots der Kernzustände (Desktop und Mobil) manuell angesehen.
+- **Nicht ausgeführt:** echte Provider-Läufe (keine Schlüssel in dieser Umgebung), echte Instagram-/TikTok-Abrufe, Screenreader-Test, Messung von Kosten und Latenz.

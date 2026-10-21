@@ -4,8 +4,11 @@ import { modelSchemas, modelInstructions, outputSchemas } from '../schemas/model
 import { safeFetchPage, validatePublicUrl, type Page } from './network.js';
 
 export type ModelTask = 'extract' | 'plan' | 'analyze' | 'verify' | 'repair';
+export interface ImageInput { mime: string; base64: string }
 export interface Providers {
   model(task: ModelTask, data: unknown, signal: AbortSignal): Promise<unknown>;
+  /** Optional: transcribes visible text from an already validated, metadata-free image. */
+  readImage?(image: ImageInput, signal: AbortSignal): Promise<{ legible: boolean; text: string }>;
   search(query: string, signal: AbortSignal): Promise<{ url: string; title: string }[]>;
   fetch(url: string, signal: AbortSignal): Promise<Page>;
 }
@@ -24,9 +27,9 @@ export function createLiveProviders(options: Options = {}): Providers {
   const config=modelConfiguration();
   const provider=options.modelProvider??(options.openrouterKey?'openrouter':options.openaiKey?'openai':config.provider);
   const model=options.model??(provider==='openrouter'?(process.env.OPENROUTER_MODEL||'google/gemini-2.5-flash'):(process.env.OPENAI_MODEL||'gpt-4.1-mini'));
-  async function post(url: string, key: string | undefined, payload: unknown, parentSignal: AbortSignal): Promise<unknown> {
+  async function post(url: string, key: string | undefined, payload: unknown, parentSignal: AbortSignal, timeoutMs = 25_000): Promise<unknown> {
     if (!key) throw new ProviderError('Live-Zugang ist nicht konfiguriert.');
-    const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(25_000)]);
+    const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(timeoutMs)]);
     let response: Response;
     try {
       response = await send(url, { method: 'POST', redirect: 'error', signal, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -59,42 +62,48 @@ export function createLiveProviders(options: Options = {}): Providers {
       throw new ProviderError('Anbieter lieferte keine lesbare JSON-Antwort.');
     } finally { reader.releaseLock(); }
   }
+  /** One strict structured-output call. `image` is attached after the prompt text, as both providers recommend. */
+  async function structured(task: keyof typeof outputSchemas, prompt: string, image: ImageInput | undefined, signal: AbortSignal, timeoutMs?: number): Promise<unknown> {
+    const schema = { ...modelSchemas[task] };
+    delete schema.$schema;
+    const dataUrl = image ? `data:${image.mime};base64,${image.base64}` : undefined;
+    let text: string;
+    if (provider === 'openrouter') {
+      const result = ChatResponseSchema.safeParse(await post('https://openrouter.ai/api/v1/chat/completions', options.openrouterKey ?? process.env.OPENROUTER_API_KEY, {
+        model,
+        messages: [{ role: 'system', content: modelInstructions[task] }, { role: 'user', content: dataUrl ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUrl } }] : prompt }],
+        response_format: { type: 'json_schema', json_schema: { name: `trustlens_${task}`, strict: true, schema } },
+        provider: { require_parameters: true, allow_fallbacks: false, data_collection: 'deny' },
+        reasoning: { enabled: false, exclude: true },
+        max_tokens: 5000,
+        stream: false,
+      }, signal, timeoutMs));
+      if (!result.success || result.data.choices[0].message.refusal) throw new ProviderError('Modellantwort ist unvollständig, abgelehnt oder ungültig.');
+      text = result.data.choices[0].message.content;
+    } else {
+      const result = ResponseSchema.safeParse(await post('https://api.openai.com/v1/responses', options.openaiKey ?? process.env.OPENAI_API_KEY, {
+        model,
+        store: false,
+        instructions: modelInstructions[task],
+        input: [{ role: 'user', content: dataUrl ? [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: dataUrl }] : prompt }],
+        text: { format: { type: 'json_schema', name: `trustlens_${task}`, strict: true, schema } },
+        max_output_tokens: 5000,
+      }, signal, timeoutMs));
+      if (!result.success || result.data.status !== 'completed') throw new ProviderError('Modellantwort ist unvollständig oder ungültig.');
+      const content = result.data.output.filter(item => item.type === 'message').flatMap(item => item.content ?? []);
+      if (content.some(item => item.type === 'refusal')) throw new ProviderError('Das Modell konnte diese Eingabe nicht bearbeiten.');
+      text = content.filter(item => item.type === 'output_text').map(item => item.text ?? '').join('');
+    }
+    let json: unknown;
+    try { json = JSON.parse(text); } catch { throw new ProviderError('Modell lieferte kein gültiges JSON.'); }
+    const parsed = outputSchemas[task].safeParse(json);
+    if (!parsed.success) throw new ProviderError('Modellantwort verletzt den Datenvertrag.');
+    return parsed.data;
+  }
   return {
-    async model(task, data, signal) {
-      const schema = { ...modelSchemas[task] };
-      delete schema.$schema;
-      let text:string;
-      if(provider==='openrouter'){
-        const result=ChatResponseSchema.safeParse(await post('https://openrouter.ai/api/v1/chat/completions',options.openrouterKey??process.env.OPENROUTER_API_KEY,{
-          model,
-          messages:[{role:'system',content:modelInstructions[task]},{role:'user',content:JSON.stringify({untrustedData:data})}],
-          response_format:{type:'json_schema',json_schema:{name:`trustlens_${task}`,strict:true,schema}},
-          provider:{require_parameters:true,allow_fallbacks:false,data_collection:'deny'},
-          reasoning:{enabled:false,exclude:true},
-          max_tokens:5000,
-          stream:false,
-        },signal));
-        if(!result.success||result.data.choices[0].message.refusal)throw new ProviderError('Modellantwort ist unvollständig, abgelehnt oder ungültig.');
-        text=result.data.choices[0].message.content;
-      }else{
-        const result = ResponseSchema.safeParse(await post('https://api.openai.com/v1/responses', options.openaiKey ?? process.env.OPENAI_API_KEY, {
-          model,
-          store: false,
-          instructions: modelInstructions[task],
-          input: [{ role: 'user', content: JSON.stringify({ untrustedData: data }) }],
-          text: { format: { type: 'json_schema', name: `trustlens_${task}`, strict: true, schema } },
-          max_output_tokens: 5000,
-        }, signal));
-        if (!result.success || result.data.status !== 'completed') throw new ProviderError('Modellantwort ist unvollständig oder ungültig.');
-        const content = result.data.output.filter(item => item.type === 'message').flatMap(item => item.content ?? []);
-        if (content.some(item => item.type === 'refusal')) throw new ProviderError('Das Modell konnte diese Eingabe nicht bearbeiten.');
-        text = content.filter(item => item.type === 'output_text').map(item => item.text ?? '').join('');
-      }
-      let json: unknown;
-      try { json = JSON.parse(text); } catch { throw new ProviderError('Modell lieferte kein gültiges JSON.'); }
-      const parsed = outputSchemas[task].safeParse(json);
-      if (!parsed.success) throw new ProviderError('Modellantwort verletzt den Datenvertrag.');
-      return parsed.data;
+    model: (task, data, signal) => structured(task, JSON.stringify({ untrustedData: data }), undefined, signal),
+    async readImage(image, signal) {
+      return outputSchemas.ocr.parse(await structured('ocr', 'Transkribiere den sichtbaren Text dieses Bildes.', image, signal, 45_000));
     },
     async search(query, signal) {
       const result = SearchSchema.safeParse(await post('https://api.firecrawl.dev/v2/search', options.firecrawlKey ?? process.env.FIRECRAWL_API_KEY, { query, limit: 5, sources: [{ type: 'web' }], timeout: 20_000 }, signal));

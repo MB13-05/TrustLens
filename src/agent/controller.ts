@@ -1,9 +1,9 @@
 import {randomUUID} from 'node:crypto';
 import {selectPassages} from '../evidence/passages.js';
 import {outputSchemas} from '../schemas/model.js';
-import {type Claim,type Run,type Source,type SourceChunk,type Result,type Analysis} from '../schemas/contracts.js';
+import {type Claim,type InputOrigin,type Run,type Source,type SourceChunk,type Result,type Analysis} from '../schemas/contracts.js';
 import type {Providers,ModelTask} from '../tools/providers.js';
-import {unresolved,validateReport} from '../evidence/report.js';
+import {unresolved,technicalFailure,validateReport,ReportValidationError} from '../evidence/report.js';
 
 const limits={model:7,search:4,fetch:6};
 export class RunController {
@@ -15,10 +15,12 @@ export class RunController {
  private analysis:Analysis|null=null;
  private stopped=false;
  private failures=0;
+ private modelFailures=0;
  private repaired=false;
- constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number,initialModelCalls=1,startedAt?:number){
+ private technicalNotes:string[]=[];
+ constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number,initialModelCalls=1,startedAt?:number,private input?:InputOrigin){
   const now=Date.now();
-  this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(startedAt??now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:initialModelCalls,search:0,fetch:0,rounds:0},events:[],result:null,error:null};
+  this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(startedAt??now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:initialModelCalls,search:0,fetch:0,rounds:0},events:[],found:[],result:null,error:null};
   this.event('Prüflauf angelegt');
   this.timer=setTimeout(()=>this.finishStopped('partial','Die harte Zeitgrenze wurde erreicht.'),deadlineMs);
   this.timer.unref();
@@ -39,10 +41,10 @@ export class RunController {
   try{const value=await Promise.race([work(),halted]);this.assertActive();return value;}
   finally{signal.removeEventListener('abort',stop);}
  }
- private async model(task:ModelTask,data:unknown){try{return await this.operation('model',()=>this.providers.model(task,data,this.abort.signal));}catch(error){if(!this.stopped)this.failures++;throw error;}}
+ private async model(task:ModelTask,data:unknown){try{return await this.operation('model',()=>this.providers.model(task,data,this.abort.signal));}catch(error){if(!this.stopped)this.modelFailures++;throw error;}}
  private context(){return {claim:this.claim,sources:this.sources,chunks:this.chunks,previousQueries:this.queries,remainingBudget:{model:limits.model-this.run.counters.model,search:limits.search-this.run.counters.search,fetch:limits.fetch-this.run.counters.fetch}};}
  private queries:string[]=[];
- private result(analysis:Analysis):Result{return {claim:this.claim,checkedAt:new Date().toISOString(),verdict:analysis.verdict,evidence:analysis.evidence,sources:this.sources.map(s=>({...s})),chunks:this.chunks.map(c=>({...c}))};}
+ private result(analysis:Analysis):Result{return {claim:this.claim,checkedAt:new Date().toISOString(),verdict:analysis.verdict,evidence:analysis.evidence,sources:this.sources.map(s=>({...s})),chunks:this.chunks.map(c=>({...c})),technicalNotes:[...this.technicalNotes],...(this.input?{input:this.input}:{})};}
  private finishStopped(status:'partial'|'cancelled',message:string){
   this.stopped=true;clearTimeout(this.timer);this.abort.abort();this.run.status=status;
   // An unfinished evaluation is never presented as a strong verdict.
@@ -59,7 +61,7 @@ export class RunController {
    let candidates:{url:string;title:string}[];
    try{candidates=await this.operation('search',()=>this.providers.search(query,this.abort.signal));this.event('Suche abgeschlossen');}
    catch{this.assertActive();this.failures++;this.event('Suchdienst nicht erreichbar');continue;}
-   for(const candidate of candidates.slice(0,6)){
+   for(const candidate of this.diversify(candidates).slice(0,6)){
     this.assertActive();if(this.run.counters.fetch>=fetchCeiling)break;
     if(this.sources.some(s=>s.requestedUrl===candidate.url))continue;
     // Even unavailable URLs must be safe to render as links.
@@ -70,58 +72,90 @@ export class RunController {
      const final=new URL(page.finalUrl);if(!['https:','http:'].includes(final.protocol)||final.username||final.password)throw Error('URL');
      const selected=selectPassages(id,page.text,this.claim);
      const source:Source={id,requestedUrl:candidate.url,finalUrl:page.finalUrl,title:page.title,publisher:page.publisher,publishedAt:page.publishedAt,updatedAt:page.updatedAt,retrievedAt:new Date().toISOString(),provenanceGroup:final.hostname,retrievalStatus:'available',truncated:page.text.length>15000};
-     this.sources.push(source);
+     this.sources.push(source);this.run.found.push({id,title:source.title,publisher:source.publisher,url:source.finalUrl,status:'available'});
      // Stable chunk IDs follow retrieval order; chunks preserve exact source text.
      this.chunks.push(...selected);
      this.event('Quelle abgerufen: '+source.title);
     }catch{
      this.assertActive();this.failures++;
      this.sources.push({id,requestedUrl:candidate.url,finalUrl:candidate.url,title:candidate.title,publisher:url.hostname,publishedAt:null,updatedAt:null,retrievedAt:new Date().toISOString(),provenanceGroup:url.hostname,retrievalStatus:'unavailable',truncated:false});
+     this.run.found.push({id,title:candidate.title,publisher:url.hostname,url:candidate.url,status:'unavailable'});
      this.event('Quelle nicht abrufbar: '+url.hostname);
     }
    }
   }
  }
- private async analyze():Promise<Analysis>{
-  let raw:unknown;
-  try{raw=await this.model('analyze',this.context());return validateReport(raw,this.claim,this.sources,this.chunks);}
+
+ /** Same-host results come last, so one publisher cannot use up the whole fetch budget. */
+ private diversify(candidates:{url:string;title:string}[]){
+  const known=new Set(this.sources.map(s=>{try{return new URL(s.requestedUrl).hostname;}catch{return '';}}));
+  const fresh:typeof candidates=[];const repeated:typeof candidates=[];
+  for(const candidate of candidates){let host='';try{host=new URL(candidate.url).hostname;}catch{}(known.has(host)?repeated:fresh).push(candidate);known.add(host);}
+  return [...fresh,...repeated];
+ }
+ private issuesOf(error:unknown):string[]{return error instanceof ReportValidationError?error.issues:['Die Antwort war unvollständig oder entsprach nicht dem vorgegebenen Datenformat.'];}
+ /** One validated analysis, with at most one correction that is told exactly what was wrong. `degraded` marks a system fallback, never a research finding. */
+ private async analyze():Promise<{analysis:Analysis;degraded:boolean}>{
+  let raw:unknown;let issues:string[];
+  try{raw=await this.model('analyze',this.context());return {analysis:validateReport(raw,this.claim,this.sources,this.chunks),degraded:false};}
+  catch(error){this.assertActive();issues=this.issuesOf(error);}
+  if(this.repaired||this.run.counters.model>=limits.model)return {analysis:technicalFailure(this.claim),degraded:true};
+  this.repaired=true;this.event('Ungültige Belegverweise werden überprüft');
+  try{raw=await this.model('repair',{...this.context(),invalidReport:raw??null,issues});return {analysis:validateReport(raw,this.claim,this.sources,this.chunks),degraded:false};}
+  catch{this.assertActive();return {analysis:technicalFailure(this.claim),degraded:true};}
+ }
+ private isStrong(analysis:Analysis){return ['Belegt','Widersprochen','Kontext fehlt'].includes(analysis.verdict.label);}
+ /** Independent check of strong verdicts only. A failed or unavailable check withdraws the verdict but keeps the registered evidence. */
+ private async verify(analysis:Analysis):Promise<Analysis>{
+  if(this.run.counters.model>=limits.model){this.technicalNotes.push('Die unabhängige Gegenprüfung entfiel, weil das Modellbudget erschöpft war.');return analysis;}
+  this.event('Inhaltliche Begründung wird gegengeprüft');
+  const withdrawn=(summary:string,limitations:string[]):Analysis=>({...analysis,verdict:{...analysis.verdict,label:'Ungeklärt',summary,reasoningItems:[],limitations:[...limitations,...analysis.verdict.limitations]}});
+  let check:{sound:boolean;issues:string[]};
+  try{check=outputSchemas.verify.parse(await this.model('verify',{...this.context(),report:analysis}));}
   catch{
    this.assertActive();
-   if(this.repaired||this.run.counters.model>=limits.model)return unresolved(this.claim,['Die Berichtvalidierung ist fehlgeschlagen.']);
-   this.repaired=true;this.event('Ungültige Belegverweise werden überprüft');
-   try{raw=await this.model('repair',{...this.context(),invalidReport:raw,error:'Schema, Belegverweise oder wörtliche Zitate ungültig.'});return validateReport(raw,this.claim,this.sources,this.chunks);}
-   catch{this.assertActive();return unresolved(this.claim,['Belegverweise konnten nicht zuverlässig validiert werden.']);}
+   this.technicalNotes.push('Die unabhängige Gegenprüfung war nicht verfügbar. Deshalb wird keine belegte Einordnung ausgegeben.');
+   return withdrawn('Die Fundstellen liegen vor, konnten aber nicht unabhängig gegengeprüft werden.',[]);
   }
+  if(check.sound)return analysis;
+  const summary='Die unabhängige Gegenprüfung konnte die vorgeschlagene Einordnung nicht bestätigen.';
+  return withdrawn(summary,[summary,...check.issues]);
  }
  private async execute(){
   try{
    this.assertActive();
+   let degraded=false;
    if(this.claim.checkability==='opinion'||this.claim.checkability==='prediction'){
     const a=unresolved(this.claim,['Meinung oder derzeit nicht überprüfbare Prognose.']);a.verdict.label='Nicht sachlich prüfbar';a.verdict.summary='Diese Aussage ist ein Werturteil oder eine derzeit nicht sachlich prüfbare Prognose.';this.analysis=a;
    }else{
     this.run.status='researching';
     const plan=outputSchemas.plan.parse(await this.model('plan',{claim:this.claim}));
     this.run.counters.rounds=1;await this.collect(plan.queries);
-    this.run.status='evaluating';this.event('Belege und Zeitbezug werden geprüft');this.analysis=await this.analyze();
-    if(this.analysis.gap&&this.analysis.followUpQuery&&!this.queries.includes(this.analysis.followUpQuery)&&this.run.counters.search<limits.search&&this.run.counters.fetch<limits.fetch&&this.run.counters.model<=limits.model-(this.repaired?2:3)){
-     this.run.counters.rounds=2;this.run.status='researching';this.event('Weitere Belege gesucht: '+this.analysis.gap);await this.collect([this.analysis.followUpQuery]);this.run.status='evaluating';this.analysis=await this.analyze();
+    this.run.status='evaluating';this.event('Belege und Zeitbezug werden geprüft');
+    const first=await this.analyze();this.analysis=first.analysis;degraded=first.degraded;
+    if(!degraded&&this.analysis.gap&&this.analysis.followUpQuery&&!this.queries.includes(this.analysis.followUpQuery)&&this.run.counters.search<limits.search&&this.run.counters.fetch<limits.fetch&&this.run.counters.model<=limits.model-(this.repaired?2:3)){
+     this.run.counters.rounds=2;this.run.status='researching';this.event('Weitere Belege gesucht: '+this.analysis.gap);await this.collect([this.analysis.followUpQuery]);this.run.status='evaluating';
+     const second=await this.analyze();
+     if(second.degraded)this.technicalNotes.push('Die zusätzlich gefundenen Quellen konnten nicht ausgewertet werden; das Ergebnis beruht auf der ersten Recherchrunde.');
+     else this.analysis=second.analysis;
     }
-    if(this.run.counters.model<limits.model){
-     this.event('Inhaltliche Begründung wird gegengeprüft');
-     const check=outputSchemas.verify.parse(await this.model('verify',{...this.context(),report:this.analysis}));
-     if(!check.sound)this.analysis=unresolved(this.claim,['Die unabhängige Belegprüfung trägt das Urteil nicht.',...check.issues]);
-    }
+    if(degraded)this.technicalNotes.push('Die automatische Belegzuordnung ist auch nach einer Korrektur fehlgeschlagen. Die Quellen wurden gelesen, aber nicht zuverlässig ausgewertet.');
+    else if(this.isStrong(this.analysis))this.analysis=await this.verify(this.analysis);
    }
    this.assertActive();
    if(this.analysis.gap&&!this.analysis.verdict.limitations.includes(this.analysis.gap))this.analysis.verdict.limitations.push(this.analysis.gap);
-   if(this.analysis.verdict.label==='Ungeklärt'&&!this.analysis.verdict.limitations.length)this.analysis.verdict.limitations.push('Die vorhandenen Fundstellen reichen nicht für eine abschließende Einordnung.');
-   if(this.failures&&!this.chunks.length){this.run.status='failed';this.run.error='Rechercheprovider oder Quellen waren nicht erreichbar.';this.analysis=unresolved(this.claim,[this.run.error]);}
-   else{this.run.status=this.failures?'partial':'completed';if(this.failures)this.analysis.verdict.limitations.push('Ein Teil der Recherche war nicht erreichbar.');}
+   if(this.analysis.verdict.label==='Ungeklärt'&&!this.analysis.verdict.limitations.length&&!this.technicalNotes.length)this.analysis.verdict.limitations.push('Die vorhandenen Fundstellen reichen nicht für eine abschließende Einordnung.');
+   if((this.failures||this.modelFailures)&&!this.chunks.length){this.run.status='failed';this.run.error='Rechercheprovider oder Quellen waren nicht erreichbar.';this.analysis=unresolved(this.claim,[this.run.error]);}
+   else{
+    this.run.status=this.failures||this.technicalNotes.length?'partial':'completed';
+    if(this.failures)this.analysis.verdict.limitations.push('Ein Teil der Recherche war nicht erreichbar.');
+   }
    this.run.result=this.result(this.analysis);this.event('Ergebnis erstellt');this.stopped=true;clearTimeout(this.timer);
   }catch{
    if(this.stopped)return;
    this.run.status=this.chunks.length?'partial':'failed';this.run.error='Der Prüflauf konnte nicht vollständig abgeschlossen werden.';
-   this.run.result=this.result(unresolved(this.claim,[this.run.error]));this.event(this.run.error);this.stopped=true;clearTimeout(this.timer);this.abort.abort();
+   this.technicalNotes.push(this.run.error);
+   this.run.result=this.result(technicalFailure(this.claim));this.event(this.run.error);this.stopped=true;clearTimeout(this.timer);this.abort.abort();
   }
  }
 }

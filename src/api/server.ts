@@ -3,9 +3,10 @@ import {resolve} from 'node:path';
 import {createApp} from './app.js';
 import {createLiveProviders} from '../tools/providers.js';
 import {modelConfiguration} from '../tools/model-config.js';
+import {createPostReader} from '../inputs/post.js';
 const modelConfig=modelConfiguration();
 const live=modelConfig.apiKey&&process.env.FIRECRAWL_API_KEY?createLiveProviders({modelProvider:modelConfig.provider}):undefined;
-const app=createApp({liveProviders:live,modelProviderName:`${modelConfig.provider==='openrouter'?'OpenRouter':'OpenAI'} (${modelConfig.model})`});
+const app=createApp({liveProviders:live,postReader:createPostReader(),modelProviderName:`${modelConfig.provider==='openrouter'?'OpenRouter':'OpenAI'} (${modelConfig.model})`});
 if(process.env.NODE_ENV==='production')app.use(express.static(resolve('dist')));
 else{
  const {createServer}=await import('vite');
