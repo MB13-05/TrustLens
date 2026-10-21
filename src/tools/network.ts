@@ -15,6 +15,10 @@ const MAX_BYTES = 1_000_000;
 export function isPublicAddress(value: string): boolean {
   try {
     const address = ipaddr.parse(value);
+    // NAT64 (RFC 6052) well-known prefix: the target is the embedded IPv4 address, so that one decides.
+    if (address.kind() === 'ipv6' && (address as ipaddr.IPv6).match(ipaddr.IPv6.parse('64:ff9b::'), 96)) {
+      return isPublicAddress((address as ipaddr.IPv6).toByteArray().slice(12).join('.'));
+    }
     if (address.range() !== 'unicast') return false;
     if (address.kind() === 'ipv4') return true;
     const ipv6 = address as ipaddr.IPv6;
@@ -47,6 +51,13 @@ export async function resolvePublicTarget(input: string, resolve: Resolver = hos
   return { url, ...addresses[0]! };
 }
 
+/** Decodes a response body using the declared charset (header first, then an early <meta>), defaulting to UTF-8. */
+export function decodeBody(body: Buffer, contentType: string): string {
+  const declared = /charset=["']?([\w:.-]+)/i.exec(contentType)?.[1]
+    ?? /<meta[^>]+charset=["']?([\w:.-]+)/i.exec(body.subarray(0, 2048).toString('latin1'))?.[1];
+  try { return new TextDecoder(declared ?? 'utf-8').decode(body); } catch { return new TextDecoder('utf-8').decode(body); }
+}
+
 /** The validated address is used by the socket; DNS is never resolved a second time. */
 function requestPinned(target: PublicTarget, signal: AbortSignal): Promise<PageResponse> {
   return new Promise((resolve, reject) => {
@@ -73,7 +84,7 @@ function requestPinned(target: PublicTarget, signal: AbortSignal): Promise<PageR
         chunks.push(chunk);
       });
       response.on('error', reject);
-      response.on('end', () => resolve({ status, headers: response.headers, body: Buffer.concat(chunks).toString('utf8') }));
+      response.on('end', () => resolve({ status, headers: response.headers, body: decodeBody(Buffer.concat(chunks), String(response.headers['content-type'] ?? '')) }));
     });
     request.on('error', reject);
     request.end();
@@ -115,7 +126,7 @@ export async function safeFetchPage(requestedUrl: string, parentSignal: AbortSig
     };
     const publishedAt = date('meta[property="article:published_time"], meta[name="date"]');
     const updatedAt = date('meta[property="article:modified_time"], meta[property="og:updated_time"]');
-    $('script, style, noscript, iframe, svg, nav, footer, header, form, [hidden], [aria-hidden="true"]').remove();
+    $('script, style, noscript, iframe, svg, nav, footer, header, form, aside, [hidden], [aria-hidden="true"], [role="navigation"], sup.reference, .mw-editsection, .navbox').remove();
     $('p, div, section, article, h1, h2, h3, li, br, tr').each((_index, node) => { $(node).append('\n'); });
     const root = $('main').first().length ? $('main').first() : $('article').first().length ? $('article').first() : $('body');
     const text = root.text().split('\n').map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
