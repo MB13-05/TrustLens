@@ -4,7 +4,7 @@
  */
 import { createApp } from '../src/api/app.js';
 import { PostUnavailable, type PostReader } from '../src/inputs/post.js';
-import type { Providers } from '../src/tools/providers.js';
+import { ModelOutputError, type Providers } from '../src/tools/providers.js';
 import type { Analysis, Claim, SourceChunk } from '../src/schemas/contracts.js';
 
 const PAGES: Record<string, { title: string; text: string }> = {
@@ -22,6 +22,12 @@ function quoteFrom(chunks: SourceChunk[], needle: string) {
 }
 function analyze(claim: Claim, chunks: SourceChunk[]): Analysis {
   const text = claim.normalizedText;
+  if (/ZITATRETTUNG/.test(text)) {
+    // Both attempts break the schema, but one quotation is valid and must stay visible without a verdict.
+    const first = quoteFrom(chunks, 'bis zum 9. November 1989');
+    const item = (id: string, quote: string) => ({ id, claimId: 'c1', sourceId: first.chunk.sourceId, chunkId: first.chunk.id, exactQuote: quote, relation: 'supports', scopeMatch: true, limitations: [] });
+    throw new ModelOutputError({ evidence: [item('e1', first.quote), item('e2', 'z'.repeat(301))] }, ['evidence.1.exactQuote: Too big: expected string to have <=300 characters']);
+  }
   if (/FEHLERFALL/.test(text)) {
     return { evidence: [{ id: 'e1', claimId: claim.id, sourceId: 's1', chunkId: 's1:p1', exactQuote: 'Dieser Satz steht in keiner Quelle.', relation: 'supports', scopeMatch: true, limitations: [] }], verdict: { claimId: claim.id, label: 'Belegt', summary: 'Erfunden.', reasoningItems: [{ text: 'Erfunden.', evidenceIds: ['e1'] }], evidenceIds: ['e1'], limitations: [] }, gap: null, followUpQuery: null };
   }

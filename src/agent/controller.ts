@@ -3,9 +3,17 @@ import {selectPassages} from '../evidence/passages.js';
 import {outputSchemas} from '../schemas/model.js';
 import {type Claim,type InputOrigin,type Run,type Source,type SourceChunk,type Result,type Analysis} from '../schemas/contracts.js';
 import {ModelOutputError,ProviderError,type Providers,type ModelTask} from '../tools/providers.js';
-import {unresolved,technicalFailure,validateReport,ReportValidationError} from '../evidence/report.js';
+import {unresolved,technicalFailure,validateReport,salvageEvidence,ReportValidationError} from '../evidence/report.js';
 
 const limits={model:7,search:4,fetch:6};
+/** Why a model report could not be used. Each cause gets its own note, so none is mistaken for a gap in the evidence. */
+type FailureKind='output_limit'|'schema'|'citation'|'unavailable';
+const FAILURE_CAUSES:Record<FailureKind,string>={
+ output_limit:'Der Bericht des Modells wurde auch nach einer Korrektur am Ausgabelimit abgeschnitten.',
+ schema:'Der Bericht des Modells verletzte auch nach einer Korrektur die vorgegebenen Schema-Längen oder -Felder.',
+ citation:'Zitate oder Belegverweise des Modellberichts bestanden die Zitatprüfung auch nach einer Korrektur nicht.',
+ unavailable:'Das Modell war für die Auswertung nicht erreichbar oder lieferte keine verwertbare Antwort.',
+};
 export class RunController {
  readonly run:Run;
  private abort=new AbortController();
@@ -18,6 +26,7 @@ export class RunController {
  private modelFailures=0;
  private repaired=false;
  private technicalNotes:string[]=[];
+ private failureKind:FailureKind='unavailable';
  constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number,initialModelCalls=1,startedAt?:number,private input?:InputOrigin){
   const now=Date.now();
   this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(startedAt??now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:initialModelCalls,search:0,fetch:0,rounds:0},events:[],found:[],result:null,error:null};
@@ -103,15 +112,27 @@ export class RunController {
   return [...fresh,...repeated];
  }
  private issuesOf(error:unknown):string[]{if(error instanceof ModelOutputError)return error.issues;if(error instanceof ProviderError&&error.code==='output_limit')return ['Der Bericht wurde am Ausgabelimit abgeschnitten. Erstelle einen deutlich kürzeren vollständigen Bericht mit höchstens sechs Belegen und vier Begründungspunkten. Wiederhole keine Fundstellen und kopiere nur kurze, vollständige Zitate.'];return error instanceof ReportValidationError?error.issues:['Die Antwort war unvollständig oder entsprach nicht dem vorgegebenen Datenformat.'];}
+ private classify(error:unknown):FailureKind{
+  if(error instanceof ModelOutputError)return 'schema';
+  if(error instanceof ProviderError&&error.code==='output_limit')return 'output_limit';
+  if(error instanceof ReportValidationError)return error.issues.every(issue=>issue.startsWith('Schemaverstoß'))?'schema':'citation';
+  return 'unavailable';
+ }
+ /** A system fallback without verdict. Individually verified quotations from the rejected reports stay visible; nothing else does. */
+ private fallback(rejected:unknown[],kind:FailureKind):{analysis:Analysis;degraded:true}{
+  this.failureKind=kind;
+  return {analysis:technicalFailure(this.claim,salvageEvidence(rejected,this.claim,this.sources,this.chunks)),degraded:true};
+ }
  /** One validated analysis, with at most one correction that is told exactly what was wrong. `degraded` marks a system fallback, never a research finding. */
  private async analyze():Promise<{analysis:Analysis;degraded:boolean}>{
-  let raw:unknown;let issues:string[];
+  const rejected:unknown[]=[];let raw:unknown;let issues:string[];let kind:FailureKind;
   try{raw=await this.model('analyze',this.context());return {analysis:validateReport(raw,this.claim,this.sources,this.chunks),degraded:false};}
-  catch(error){this.assertActive();if(error instanceof ModelOutputError)raw=error.output;issues=this.issuesOf(error);}
-  if(this.repaired||this.run.counters.model>=limits.model)return {analysis:technicalFailure(this.claim),degraded:true};
+  catch(error){this.assertActive();if(error instanceof ModelOutputError)raw=error.output;if(raw!==undefined)rejected.push(raw);issues=this.issuesOf(error);kind=this.classify(error);}
+  if(this.repaired||this.run.counters.model>=limits.model)return this.fallback(rejected,kind);
   this.repaired=true;this.event('Ungültige Belegverweise werden überprüft');
-  try{raw=await this.model('repair',{...this.context(),invalidReport:raw??null,issues});return {analysis:validateReport(raw,this.claim,this.sources,this.chunks),degraded:false};}
-  catch{this.assertActive();return {analysis:technicalFailure(this.claim),degraded:true};}
+  let corrected:unknown;
+  try{corrected=await this.model('repair',{...this.context(),invalidReport:raw??null,issues});return {analysis:validateReport(corrected,this.claim,this.sources,this.chunks),degraded:false};}
+  catch(error){this.assertActive();if(error instanceof ModelOutputError)corrected=error.output;if(corrected!==undefined)rejected.push(corrected);return this.fallback(rejected,this.classify(error));}
  }
  private isStrong(analysis:Analysis){return ['Belegt','Widersprochen','Kontext fehlt'].includes(analysis.verdict.label);}
  /** Independent check of strong verdicts only. A failed or unavailable check withdraws the verdict but keeps the registered evidence. */
@@ -143,12 +164,17 @@ export class RunController {
     this.run.status='evaluating';this.event('Belege und Zeitbezug werden geprüft');
     const first=await this.analyze();this.analysis=first.analysis;degraded=first.degraded;
     if(!degraded&&this.analysis.gap&&this.analysis.followUpQuery&&!this.queries.includes(this.analysis.followUpQuery)&&this.run.counters.search<limits.search&&this.run.counters.fetch<limits.fetch&&this.run.counters.model<=limits.model-(this.repaired?2:3)){
+     const sectionsBefore=this.chunks.length;
      this.run.counters.rounds=2;this.run.status='researching';this.event('Weitere Belege gesucht: '+this.analysis.gap);await this.collect([this.analysis.followUpQuery]);this.run.status='evaluating';
-     const second=await this.analyze();
-     if(second.degraded)this.technicalNotes.push('Die zusätzlich gefundenen Quellen konnten nicht ausgewertet werden; das Ergebnis beruht auf der ersten Recherchrunde.');
-     else this.analysis=second.analysis;
+     // A second analysis without new material would spend a model call to see the same text again, and could only make the first result worse.
+     if(this.chunks.length===sectionsBefore)this.event('Die zusätzliche Suche brachte keine neuen Abschnitte; die erste Auswertung bleibt maßgeblich.');
+     else{
+      const second=await this.analyze();
+      if(second.degraded)this.technicalNotes.push('Die zusätzlich gefundenen Quellen konnten nicht ausgewertet werden; das Ergebnis beruht auf der ersten Recherchrunde.');
+      else this.analysis=second.analysis;
+     }
     }
-    if(degraded)this.technicalNotes.push('Die automatische Belegzuordnung ist auch nach einer Korrektur fehlgeschlagen. Die Quellen wurden gelesen, aber nicht zuverlässig ausgewertet.');
+    if(degraded)this.technicalNotes.push(FAILURE_CAUSES[this.failureKind]+' Die Quellen wurden gelesen, aber nicht zuverlässig ausgewertet.'+(this.analysis.evidence.length?' Die gezeigten Zitate wurden einzeln als wörtlich vorhanden geprüft, ihre Einordnung nicht.':''));
     else if(this.isStrong(this.analysis))this.analysis=await this.verify(this.analysis);
    }
    this.assertActive();

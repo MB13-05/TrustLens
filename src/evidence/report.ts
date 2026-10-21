@@ -1,4 +1,5 @@
 import {AnalysisSchema,type Analysis,type Claim,type Evidence,type Source,type SourceChunk} from '../schemas/contracts.js';
+import {z} from 'zod';
 import {locateQuote} from './quotes.js';
 
 /** Concrete, German, model-addressed findings. Never shown to users verbatim; they only steer the single correction step. */
@@ -11,11 +12,42 @@ const shorten=(text:string,max=90)=>text.length>max?text.slice(0,max)+'…':text
 export function unresolved(claim:Claim,limitations:string[]):Analysis {
  return {evidence:[],verdict:{claimId:claim.id,label:'Ungeklärt',summary:'Die verfügbaren Belege reichen für eine belastbare Einordnung nicht aus.',reasoningItems:[],evidenceIds:[],limitations},gap:null,followUpQuery:null};
 }
-/** The sources were read but could not be evaluated reliably. This is a software limit and says nothing about the claim. */
-export function technicalFailure(claim:Claim):Analysis {
+/**
+ * The sources were read but could not be evaluated reliably. This is a software limit and says nothing about the claim.
+ * `evidence` may hold quotations that were each verified to appear verbatim in the registered text; they carry no verdict.
+ */
+export function technicalFailure(claim:Claim,evidence:Evidence[]=[]):Analysis {
  const analysis=unresolved(claim,['Die Aussage wurde nicht inhaltlich eingeordnet. Die gelesenen Quellen sind unten aufgeführt und können selbst geprüft werden.']);
- analysis.verdict.summary='Die Quellen konnten technisch nicht zuverlässig ausgewertet werden. Das sagt nichts darüber aus, ob die Aussage stimmt.';
- return analysis;
+ analysis.verdict.summary=evidence.length
+  ?'Die Auswertung des Modells konnte technisch nicht validiert werden. Die gezeigten Zitate stehen nachweislich wörtlich in den gelesenen Quellen; eine Einordnung liegt nicht vor.'
+  :'Die Quellen konnten technisch nicht zuverlässig ausgewertet werden. Das sagt nichts darüber aus, ob die Aussage stimmt.';
+ return {...analysis,evidence};
+}
+
+const MAX_SALVAGED=6;
+const NOT_CROSS_CHECKED='Das Zitat steht wörtlich in der Quelle. Seine Einordnung (stützend, widersprechend, Umfang) wurde nicht gegengeprüft.';
+const QuoteReference=z.object({sourceId:z.string().max(80),chunkId:z.string().max(80),exactQuote:z.string().min(1).max(300)});
+/**
+ * Quotations from rejected reports that still pass the full citation check on their own, at most six, without duplicates.
+ * Nothing the model asserted about them survives: relation, scope and reasoning are reset, so no verdict is implied.
+ */
+export function salvageEvidence(reports:unknown[],claim:Claim,sources:Source[],chunks:SourceChunk[]):Evidence[] {
+ const found:Evidence[]=[];
+ const seen=new Set<string>();
+ for(const report of reports){
+  const items=(report as {evidence?:unknown}|null)?.evidence;
+  if(!Array.isArray(items))continue;
+  for(const item of items){
+   if(found.length>=MAX_SALVAGED)return found;
+   const reference=QuoteReference.safeParse(item);
+   if(!reference.success)continue;
+   const checked=checkEvidence({id:`e${found.length+1}`,claimId:claim.id,...reference.data,relation:'context',scopeMatch:false,limitations:[]},claim,sources,chunks,new Set(),[]);
+   if(!checked||seen.has(checked.exactQuote))continue;
+   seen.add(checked.exactQuote);
+   found.push({...checked,relation:'context',scopeMatch:false,limitations:[NOT_CROSS_CHECKED]});
+  }
+ }
+ return found;
 }
 
 function checkEvidence(e:Evidence,claim:Claim,sources:Source[],chunks:SourceChunk[],seen:Set<string>,issues:string[]):Evidence|null {

@@ -126,3 +126,17 @@ Erneute vollständige Live-Läufe nach der Korrektur:
 - Ursprünglicher Instagram-Ablauf: Beschreibung einlesen, die darin besprochene Gegenbehauptung ausdrücklich auswählen/bearbeiten, bestätigen und recherchieren. Etwa 15 Sekunden, „Widersprochen“, fünf registrierte Fundstellen, drei gelesene Quellen, eine Zusatzquelle unzugänglich. Herkunft `post`, Plattform Instagram, Umfang `caption` und `edited:true` blieben im Ergebnis erhalten. CORRECTIV vertritt die Gegenbehauptung nicht, sondern ordnet sie als irreführend ein; getestet wurde die gezielt ausgewählte Gegenbehauptung.
 
 Ausstehend bleiben tatsächliche Rechnungsbeträge/Tokenkosten, ein erfolgreicher realer TikTok-Import, eine umfassende manuelle Bewertung der Belegqualität, Screenreader-Prüfung und Pitch-Generalprobe. Die gemessenen Einzelläufe liefern keine allgemeine Genauigkeits- oder Latenzgarantie.
+
+## Live-Belegzuordnung: einzeln verifizierte Zitate erhalten (Branch `fix/live-evidence-salvage`)
+
+**Ausgangslage (Nutzerbericht):** Lauf „Lobbyverbände … Energiewende“ (google/gemini-2.5-flash, OpenRouter/Firecrawl) las vier Quellen, endete aber nach einer Korrektur als technisches Teilergebnis ohne Belege; ein Replay mit denselben vier URLs hatte sechs gültige Zitate, ein späterer Bericht ein nicht wörtliches Zitat.
+
+**Nicht reproduziert:** In dieser Umgebung gibt es weder `.env` noch Schlüssel. Der echte Modell-/Suchlauf konnte nicht wiederholt werden; die Ursache des konkreten Live-Ausfalls (Länge, Zitat, Anbieter) ist daher weiterhin unbeobachtet.
+
+**Am Aufrufpfad belegt und behoben** (Tests: `tests/evidence-salvage.test.ts`, darunter Läufe über den echten `createLiveProviders`-Modellpfad mit kontrollierten HTTP-Antworten):
+
+1. **Alles-oder-nichts:** Scheiterte ein Bericht (Schema-Länge, Zitat) zweimal, wurden auch Zitate verworfen, die einzeln geprüft wörtlich in den gelesenen Quellen stehen. Das erklärt „sechs gültige Zitate im Replay, null im technischen Teilergebnis“. Jetzt zeigt das Ergebnis höchstens **sechs** solcher Zitate aus beiden abgelehnten Berichten (ohne Duplikate), jedes durch die unveränderte Zitatprüfung. Alles, was das Modell darüber behauptet hat, entfällt: Relation wird `context`, Umfang `nicht passend`, keine Begründung, kein Urteil („Ungeklärt“, technisch). Jede Karte nennt, dass die Einordnung nicht gegengeprüft wurde. Nicht wörtliche Zitate, Zitate über 300 Zeichen und ein siebter Beleg werden nie gezeigt. Ausgabelimit (5.000 Tokens), Schema-Längen und Zitatprüfung sind unverändert.
+2. **Ursache benannt:** Der technische Hinweis unterscheidet Ausgabelimit, Schema-/Längenverstoß, Zitat-/Verweisprüfung und nicht erreichbares Modell; keiner erscheint als Beleglücke.
+3. **Zweite Analyse nur mit neuem Material:** Brachte die Nachrecherche keinen neuen Abschnitt (alle Kandidaten bereits bekannt oder nicht lesbar), entfällt der zweite Modellaufruf; das erste Ergebnis bleibt, der Lauf vermerkt das. Das spart einen Aufruf und verhindert, dass dieselben Texte ein gutes erstes Ergebnis verschlechtern. Mit neuen Abschnitten läuft die zweite Analyse wie bisher.
+
+**Weiterhin offen:** echte Reproduktion des Live-Falls mit Schlüsseln; ob das Modell Schema-Längen (`maxLength`) bei strikten Schemas zuverlässig einhält, ist unbekannt. Die Rettung macht Ausfälle sichtbar harmloser, verhindert sie aber nicht. OCR und Post-Import bleiben ohne echte Abnahme; TikTok war live bisher nicht erfolgreich. Screenreader-Test, umfassende Quellenbewertung und echte Kostenmessung stehen aus.
