@@ -52,5 +52,5 @@ it('includes edit revalidation in the run deadline',async()=>{
 
 it('reports the configured model provider without exposing keys',async()=>{
  const app=setup({modelProviderName:'OpenRouter (google/gemini-2.5-flash)'});const config=await request(app).get('/api/config').expect(200);
- expect(config.body).toEqual({liveAvailable:true,providers:{model:'OpenRouter (google/gemini-2.5-flash)',search:'Firecrawl',fetch:'Direkter Abruf öffentlicher Webseiten'}});
+ expect(config.body).toMatchObject({liveAvailable:true,providers:{model:'OpenRouter (google/gemini-2.5-flash)',search:'Firecrawl',fetch:'Direkter Abruf öffentlicher Webseiten'},inputs:{image:false,post:false}});
 });

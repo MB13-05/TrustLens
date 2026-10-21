@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {selectPassages} from '../evidence/passages.js';
 import {outputSchemas} from '../schemas/model.js';
-import {type Claim,type Run,type Source,type SourceChunk,type Result,type Analysis} from '../schemas/contracts.js';
+import {type Claim,type InputOrigin,type Run,type Source,type SourceChunk,type Result,type Analysis} from '../schemas/contracts.js';
 import type {Providers,ModelTask} from '../tools/providers.js';
 import {unresolved,technicalFailure,validateReport,ReportValidationError} from '../evidence/report.js';
 
@@ -18,7 +18,7 @@ export class RunController {
  private modelFailures=0;
  private repaired=false;
  private technicalNotes:string[]=[];
- constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number,initialModelCalls=1,startedAt?:number){
+ constructor(private claim:Claim,mode:'live'|'demo',private providers:Providers,ttlMs:number,deadlineMs:number,initialModelCalls=1,startedAt?:number,private input?:InputOrigin){
   const now=Date.now();
   this.run={id:randomUUID(),mode,status:'queued',createdAt:new Date(startedAt??now).toISOString(),expiresAt:new Date(now+ttlMs).toISOString(),deadlineAt:new Date(now+deadlineMs).toISOString(),counters:{model:initialModelCalls,search:0,fetch:0,rounds:0},events:[],result:null,error:null};
   this.event('Prüflauf angelegt');
@@ -44,7 +44,7 @@ export class RunController {
  private async model(task:ModelTask,data:unknown){try{return await this.operation('model',()=>this.providers.model(task,data,this.abort.signal));}catch(error){if(!this.stopped)this.modelFailures++;throw error;}}
  private context(){return {claim:this.claim,sources:this.sources,chunks:this.chunks,previousQueries:this.queries,remainingBudget:{model:limits.model-this.run.counters.model,search:limits.search-this.run.counters.search,fetch:limits.fetch-this.run.counters.fetch}};}
  private queries:string[]=[];
- private result(analysis:Analysis):Result{return {claim:this.claim,checkedAt:new Date().toISOString(),verdict:analysis.verdict,evidence:analysis.evidence,sources:this.sources.map(s=>({...s})),chunks:this.chunks.map(c=>({...c})),technicalNotes:[...this.technicalNotes]};}
+ private result(analysis:Analysis):Result{return {claim:this.claim,checkedAt:new Date().toISOString(),verdict:analysis.verdict,evidence:analysis.evidence,sources:this.sources.map(s=>({...s})),chunks:this.chunks.map(c=>({...c})),technicalNotes:[...this.technicalNotes],...(this.input?{input:this.input}:{})};}
  private finishStopped(status:'partial'|'cancelled',message:string){
   this.stopped=true;clearTimeout(this.timer);this.abort.abort();this.run.status=status;
   // An unfinished evaluation is never presented as a strong verdict.
