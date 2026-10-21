@@ -7,7 +7,7 @@ import {RunController} from '../agent/controller.js';
 import {createDemoProviders,getDemoCase} from '../../fixtures/synthetic/index.js';
 import type {Providers} from '../tools/providers.js';
 
-interface Options {liveProviders?:Providers;ttlMs?:number;deadlineMs?:number;rateLimit?:number;globalRateLimit?:number}
+interface Options {liveProviders?:Providers;modelProviderName?:string;ttlMs?:number;deadlineMs?:number;rateLimit?:number;globalRateLimit?:number}
 interface Session {expires:number;claims:Map<string,{claim:Claim;mode:'live'|'demo'}>;runs:Map<string,RunController>;requests:number[];extracting:boolean}
 async function extract(providers:Providers,data:unknown,timeoutMs:number){
  const abort=new AbortController();const timer=setTimeout(()=>abort.abort(),timeoutMs);
@@ -32,7 +32,7 @@ export function createApp(options:Options={}){
   next();
  });
  app.use(express.json({limit:'128kb'}));
- app.get('/api/config',(_req,res)=>res.json({liveAvailable:Boolean(options.liveProviders),providers:{model:'OpenAI',search:'Firecrawl',fetch:'Direkter Abruf öffentlicher Webseiten'}}));
+ app.get('/api/config',(_req,res)=>res.json({liveAvailable:Boolean(options.liveProviders),providers:{model:options.modelProviderName??'OpenRouter',search:'Firecrawl',fetch:'Direkter Abruf öffentlicher Webseiten'}}));
  app.use('/api',(req,res,next)=>{
   prune();const now=Date.now();globalRequests=globalRequests.filter(t=>now-t<60_000);
   const isMutation=req.method==='POST';

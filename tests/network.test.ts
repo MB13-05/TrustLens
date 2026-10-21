@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import {modelConfiguration} from '../src/tools/model-config';
 import { isPublicAddress, validatePublicUrl, resolvePublicTarget, safeFetchPage } from '../src/tools/network';
 import { createLiveProviders } from '../src/tools/providers';
 
@@ -75,4 +76,47 @@ describe('live provider contracts without credentials or network', () => {
     await expect(providers.search('query', new AbortController().signal)).rejects.toMatchObject({ retryable: true, message: 'Rechercheanbieter meldet HTTP 503.' });
     expect(calls).toBe(1);
   });
+});
+
+describe('OpenRouter model adapter',()=>{
+ it('uses strict Chat Completions schemas and the selected model without exposing reasoning',async()=>{
+  let endpoint='';let requestBody:Record<string,unknown>={};let authorization='';
+  const providers=createLiveProviders({modelProvider:'openrouter',openrouterKey:'test-openrouter-key',model:'google/gemini-2.5-flash',fetchImpl:async(url,options)=>{
+   endpoint=String(url);requestBody=JSON.parse(String(options?.body));authorization=(options?.headers as Record<string,string>).Authorization;
+   return Response.json({choices:[{finish_reason:'stop',message:{content:'{"queries":["Originalquelle Deutschland"]}',reasoning:'Private reasoning should be ignored'}}]});
+  }});
+  await expect(providers.model('plan',{claim:'Aussage'},new AbortController().signal)).resolves.toEqual({queries:['Originalquelle Deutschland']});
+  expect(endpoint).toBe('https://openrouter.ai/api/v1/chat/completions');expect(authorization).toBe('Bearer test-openrouter-key');
+  expect(requestBody).toMatchObject({model:'google/gemini-2.5-flash',stream:false,max_tokens:5000,provider:{require_parameters:true,allow_fallbacks:false},response_format:{type:'json_schema',json_schema:{name:'trustlens_plan',strict:true,schema:{type:'object'}}}});
+  expect((requestBody.messages as {role:string}[]).map(m=>m.role)).toEqual(['system','user']);
+ });
+ it('rejects refusal, truncation, absent content and malformed structured output',async()=>{
+  for(const choice of [
+   {finish_reason:'length',message:{content:'{"queries":["query"]}'}},
+   {finish_reason:'content_filter',message:{content:null}},
+   {finish_reason:'stop',message:{content:'{"queries":["query"]}',refusal:'Cannot comply'}},
+   {finish_reason:'stop',message:{content:null}},
+   {finish_reason:'stop',message:{content:'{"queries":[]}'}},
+   {finish_reason:'stop',message:{content:'not json'}},
+  ]){
+   const p=createLiveProviders({modelProvider:'openrouter',openrouterKey:'test-key',fetchImpl:async()=>Response.json({choices:[choice]})});
+   await expect(p.model('plan',{},new AbortController().signal)).rejects.toThrow();
+  }
+ });
+ it('does not use OpenAI credits as a fallback after an OpenRouter failure',async()=>{
+  const endpoints:string[]=[];const p=createLiveProviders({modelProvider:'openrouter',openrouterKey:'router-key',openaiKey:'openai-key',fetchImpl:async url=>{endpoints.push(String(url));return new Response('secret provider diagnostic',{status:402});}});
+  await expect(p.model('plan',{},new AbortController().signal)).rejects.toThrow('HTTP 402');expect(endpoints).toEqual(['https://openrouter.ai/api/v1/chat/completions']);
+ });
+});
+
+
+describe('explicit model account selection',()=>{
+ it('uses OpenRouter by default with the affordable starting model',()=>{expect(modelConfiguration({OPENROUTER_API_KEY:'router'})).toEqual({provider:'openrouter',model:'google/gemini-2.5-flash',apiKey:'router'});});
+ it('keeps legacy OpenAI-only configuration and respects explicit selection',()=>{
+  expect(modelConfiguration({OPENAI_API_KEY:'direct'})).toMatchObject({provider:'openai',apiKey:'direct'});
+  expect(modelConfiguration({MODEL_PROVIDER:'openai',OPENROUTER_API_KEY:'router',OPENAI_API_KEY:'direct'})).toMatchObject({provider:'openai',apiKey:'direct'});
+ });
+ it('honors the selected OpenRouter model',()=>{expect(modelConfiguration({MODEL_PROVIDER:'openrouter',OPENROUTER_MODEL:'google/gemini-2.5-flash-lite'})).toMatchObject({provider:'openrouter',model:'google/gemini-2.5-flash-lite'});});
+ it('does not silently select a different account if the selected key is absent',()=>{expect(modelConfiguration({MODEL_PROVIDER:'openrouter',OPENAI_API_KEY:'direct'}).apiKey).toBeUndefined();});
+ it('rejects unknown providers',()=>{expect(()=>modelConfiguration({MODEL_PROVIDER:'typo'})).toThrow();});
 });

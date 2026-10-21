@@ -47,3 +47,18 @@ Fünf Befunde behoben: Zwei Abrufe bleiben für eine gezielte zweite Runde frei;
 - Eine geprobte Drei-Minuten-Präsentation und vorab manuell geprüfte echte Demoquellen bleiben ausstehend.
 
 Die Tests starteten lokale HTTP-Ports; in der Arbeitsumgebung war dafür eine Sandbox-Freigabe erforderlich. Es gab keine Veröffentlichung und keinen Push. Die unversionierte lokale `Plan.md` wurde nicht verändert oder eingecheckt.
+
+## OpenRouter-Erweiterung
+
+OpenRouter ist als Standardanbieter ergänzt; ein vorhandener reiner OpenAI-Zugang ohne explizite Auswahl bleibt kompatibel. Konfiguration und Anzeige nennen den gewählten Anbieter und das Modell. Standard ist `google/gemini-2.5-flash`, optional `google/gemini-2.5-flash-lite`. Die Auswahl basiert auf verfügbaren Structured Outputs und veröffentlichten Preisen, noch nicht auf einer eigenen fachlichen Live-Evaluation.
+
+Der REST-Adapter verwendet Chat Completions mit `response_format.json_schema`, `strict:true` und `provider.require_parameters:true`. Abbruch, Größenlimit und Timeout gelten weiterhin. Unvollständige, verweigerte, fehlerhafte und schemaverletzende Ausgaben werden zurückgewiesen. Es gibt keinen Kontowechsel oder automatischen Provider-Fallback. `data_collection:deny` wird gesetzt; die Aufbewahrungsbedingungen bleiben anbieterabhängig. Reasoning ist für die Gemini-Startkonfiguration deaktiviert; es wird nicht an die Oberfläche weitergereicht.
+
+Offizielle Grundlagen:
+
+- [OpenRouter Structured Outputs](https://openrouter.ai/docs/guides/features/structured-outputs)
+- [OpenRouter Provider Routing](https://openrouter.ai/docs/guides/routing/provider-selection)
+- [OpenRouter Reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+- [Gemini 2.5 Flash](https://openrouter.ai/google/gemini-2.5-flash) und [Flash-Lite](https://openrouter.ai/google/gemini-2.5-flash-lite)
+
+Nach der Erweiterung: 90 Vitest-Prüfungen, 16 Desktop-/Mobil-Browserprüfungen, Typprüfung und Build erfolgreich. OpenRouter- und Firecrawl-Schlüssel fehlen weiterhin; Provider-Verträge wurden mit kontrollierten HTTP-Antworten geprüft, keine Credits verbraucht. Ein fachlicher Live-Test und tatsächliche Kostenmessungen bleiben ausstehend.

@@ -29,15 +29,26 @@ Nur serverseitig in `.env` setzen:
 
 | Variable | Zweck |
 | --- | --- |
-| `OPENAI_API_KEY` | OpenAI Responses API mit strukturiertem JSON |
-| `OPENAI_MODEL` | Modell mit Structured Outputs, Standard `gpt-4.1-mini` |
+| `MODEL_PROVIDER` | `openrouter` (Standard) oder `openai` |
+| `OPENROUTER_API_KEY` | OpenRouter-Schlüssel; Abrechnung über eure dortigen Credits |
+| `OPENROUTER_MODEL` | Standard `google/gemini-2.5-flash`; sparsamer: `google/gemini-2.5-flash-lite` |
+| `OPENAI_API_KEY` | Optional für den direkten OpenAI-Zugang |
+| `OPENAI_MODEL` | Nur bei `MODEL_PROVIDER=openai`, Standard `gpt-4.1-mini` |
 | `FIRECRAWL_API_KEY` | Firecrawl v2 Websuche |
 | `HOST` | Standard `127.0.0.1` |
 | `PORT` | Standard `3000` |
 
-Sind beide Schlüssel gesetzt, lässt sich **Live-Recherche** auswählen. Das Modell extrahiert Behauptungen, plant neutrale Suchen, analysiert registrierte Quellen, benennt eine konkrete Beleglücke und prüft den Bericht gesondert. Bei einer Lücke gibt es höchstens eine Nachrecherche. Such-Snippets werden nicht als Evidenz übergeben. Die Webseite zeigt tatsächliche Tool-Ereignisse; keine internen Modellgedanken.
+Sind der Schlüssel des gewählten Modellanbieters und `FIRECRAWL_API_KEY` gesetzt, lässt sich **Live-Recherche** auswählen. Das Modell extrahiert Behauptungen, plant neutrale Suchen, analysiert registrierte Quellen, benennt eine konkrete Beleglücke und prüft den Bericht gesondert. Bei einer Lücke gibt es höchstens eine Nachrecherche. Such-Snippets werden nicht als Evidenz übergeben. Die Webseite zeigt tatsächliche Tool-Ereignisse; keine internen Modellgedanken.
 
-OpenAI verarbeitet Eingabetext, Behauptung und Quellenausschnitte; `store:false` wird gesetzt. Firecrawl verarbeitet Suchbegriffe. Öffentliche Quellen werden direkt vom Server gelesen; der Webseitenbetreiber sieht diesen Abruf. Keine sensiblen personenbezogenen Daten eingeben. `.env` wird ignoriert; niemals Schlüssel in `VITE_*`-Variablen setzen. Ohne Provider-Schlüssel werden keine Live-Anfragen versucht.
+OpenRouter und der ausgewählte Modellhoster verarbeiten Eingabetext, Behauptung und Quellenausschnitte. Es werden nur Endpunkte mit Schema-Unterstützung zugelassen (`require_parameters:true`); `data_collection:deny` schließt nach OpenRouter-Klassifizierung Anbieter aus, deren Datennutzung nicht zu dieser Vorgabe passt. Das ersetzt keine Prüfung der Anbieterbedingungen. Automatische Provider-Fallbacks sind deaktiviert. Reasoning wird für die günstigen Gemini-Startmodelle deaktiviert; interne Gedanken werden nicht ausgewertet oder ausgegeben. Bei direktem OpenAI-Zugang wird `store:false` gesetzt. Firecrawl verarbeitet Suchbegriffe. Öffentliche Quellen werden direkt vom Server gelesen; der Webseitenbetreiber sieht diesen Abruf. Keine sensiblen personenbezogenen Daten eingeben. `.env` wird ignoriert; niemals Schlüssel in `VITE_*`-Variablen setzen. Ohne Provider-Schlüssel werden keine Live-Anfragen versucht.
+
+Für vorhandene OpenAI-Konfigurationen ohne `MODEL_PROVIDER` bleibt OpenAI aktiv, sofern ausschließlich ein OpenAI-Schlüssel vorliegt. Mit beiden Schlüsseln ohne explizite Auswahl hat OpenRouter Vorrang; es gibt keinen stillen Wechsel zwischen den beiden Konten.
+
+### Modellkosten als Orientierung
+
+Laut [OpenRouter-Modellseite für Gemini 2.5 Flash](https://openrouter.ai/google/gemini-2.5-flash) am 21. Oktober 2026: **0,30 US-Dollar pro Million Eingabetokens und 2,50 US-Dollar pro Million Ausgabetokens**. Die [Flash-Lite-Alternative](https://openrouter.ai/google/gemini-2.5-flash-lite) ist mit **0,10 / 0,40 US-Dollar** günstiger. Das ist eine Startauswahl für die Live-Erprobung, keine bereits gemessene Faktencheck-Qualität.
+
+Beispielrechnung für insgesamt 50.000 Eingabe- und 5.000 Ausgabetokens über alle Modellschritte: Flash etwa **0,0275 US-Dollar**, Flash-Lite etwa **0,007 US-Dollar**, jeweils ohne Suchkosten, Steuern oder mögliche Gebühren. Tatsächliche Tokenzahlen und Kosten sind noch nicht live gemessen. Preise und Verfügbarkeit können sich ändern. OpenRouter-Credits bezahlen die Modellaufrufe; Firecrawl benötigt separat einen Zugang und gegebenenfalls Credits.
 
 ## Tests
 
@@ -73,7 +84,7 @@ Abrufe erlauben ausschließlich HTTP/HTTPS mit Standardports, prüfen DNS und s�
 
 Die Demo verwendet ausschließlich **fiktive Organisationen und Dokumente** unter `demo.trustlens.invalid`; diese Links sind bewusst keine erreichbaren Originalquellen. Sie wird überall als synthetisch markiert. Es liegen noch keine manuell geprüften echten Demoaufzeichnungen vor. Siehe [fixtures/demo/README.md](fixtures/demo/README.md).
 
-Live-Adapter sind vollständig implementiert und mit Provider-Vertragsfixtures getestet. **Mangels Schlüsseln wurde weder ein echter Modell-/Suchlauf noch eine fachliche Live-Abnahme durchgeführt.** Eine manuelle Bewertung echter Quellen, Kosten-/Latenzmessung und eine geprobte Drei-Minuten-Präsentation stehen aus. Die zehn synthetischen Fälle sind keine Evidenz für eine allgemeine Erkennungsrate.
+Live-Adapter sind vollständig implementiert und mit Provider-Vertragsfixtures getestet. **Mangels Schlüsseln wurde weder ein echter OpenRouter-/OpenAI-Modell-/Suchlauf noch eine fachliche Live-Abnahme durchgeführt.** Eine manuelle Bewertung echter Quellen, Kosten-/Latenzmessung und eine geprobte Drei-Minuten-Präsentation stehen aus. Die zehn synthetischen Fälle sind keine Evidenz für eine allgemeine Erkennungsrate.
 
 Der direkte Abruf unterstützt öffentliche HTML-/Textseiten; JavaScript-only-Seiten, PDFs, Paywalls, komprimierte Antworten und Bot-Sperren können unzugänglich bleiben. Ein ehrliches Teilresultat nennt diese Grenzen. Veröffentlichungsdaten stammen, falls vorhanden, aus Seitenmetadaten; ihr Fehlen bleibt `null`. Herkunftsgruppen verwenden konservativ die Domain und behaupten keine Unabhängigkeit; ein gemeinsamer Ursprung über unterschiedliche Domains wird derzeit nur durch die Beleganalyse erkannt. Wörtliche Zitierprüfung beweist keine inhaltliche Folgerichtigkeit; auch die separate Modellprüfung kann Fehler machen.
 

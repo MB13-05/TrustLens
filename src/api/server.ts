@@ -2,8 +2,10 @@ import express from 'express';
 import {resolve} from 'node:path';
 import {createApp} from './app.js';
 import {createLiveProviders} from '../tools/providers.js';
-const live=process.env.OPENAI_API_KEY&&process.env.FIRECRAWL_API_KEY?createLiveProviders():undefined;
-const app=createApp({liveProviders:live});
+import {modelConfiguration} from '../tools/model-config.js';
+const modelConfig=modelConfiguration();
+const live=modelConfig.apiKey&&process.env.FIRECRAWL_API_KEY?createLiveProviders({modelProvider:modelConfig.provider}):undefined;
+const app=createApp({liveProviders:live,modelProviderName:`${modelConfig.provider==='openrouter'?'OpenRouter':'OpenAI'} (${modelConfig.model})`});
 if(process.env.NODE_ENV==='production')app.use(express.static(resolve('dist')));
 else{
  const {createServer}=await import('vite');

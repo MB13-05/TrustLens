@@ -49,3 +49,8 @@ it('includes edit revalidation in the run deadline',async()=>{
  const started=await agent.post('/api/runs').send({claim:{...claim,normalizedText:claim.normalizedText+'!'},mode:'live'}).expect(201);
  expect(Date.parse(started.body.deadlineAt)-Date.parse(started.body.createdAt)).toBeLessThanOrEqual(201);await new Promise(r=>setTimeout(r,130));const result=await agent.get('/api/runs/'+started.body.id);expect(result.body.status).toBe('partial');
 });
+
+it('reports the configured model provider without exposing keys',async()=>{
+ const app=setup({modelProviderName:'OpenRouter (google/gemini-2.5-flash)'});const config=await request(app).get('/api/config').expect(200);
+ expect(config.body).toEqual({liveAvailable:true,providers:{model:'OpenRouter (google/gemini-2.5-flash)',search:'Firecrawl',fetch:'Direkter Abruf öffentlicher Webseiten'}});
+});
