@@ -98,3 +98,31 @@ Neu in Komponenten aufgeteilt (`src/ui/`). Eingabe mit Modus-Auswahl (Live/Demo 
 - 65 Playwright-Prüfungen erfolgreich (4 Desktop-Tests auf Mobil bewusst übersprungen), jeweils Desktop, iPhone 13 und 320 px; darin axe-core WCAG 2 A/AA ohne Verstöße, kein horizontales Überlaufen.
 - Screenshots der Kernzustände (Desktop und Mobil) manuell angesehen.
 - **Nicht ausgeführt:** echte Provider-Läufe (keine Schlüssel in dieser Umgebung), echte Instagram-/TikTok-Abrufe, Screenreader-Test, Messung von Kosten und Latenz.
+
+## Live-Abnahme nach Übernahme von main (21. Oktober 2026)
+
+Übernommen: `893351f`, einschließlich der drei Änderungen aus `feat/research-quality-ui-inputs`. Die vorhandene lokale `.env` blieb unverändert. Die Anbieter wurden mit `google/gemini-2.5-flash` über OpenRouter und der vorhandenen Firecrawl-Konfiguration geprüft; keine Schlüssel oder Sitzungscookies wurden protokolliert.
+
+### Tatsächlich ausgeführte Prüfungen
+
+- 232 Vitest-Prüfungen und TypeScript-/Vite-Build erfolgreich. Nach der unten beschriebenen Schemaänderung erneut erfolgreich.
+- Browserprüfung des übernommenen Standes: 69 geplante Fälle, davon 65 erfolgreich und vier bewusst übersprungene reine Desktop-Aktionen auf Mobilansichten. Der Laufstatus in `test-results/.last-run.json` war `passed`, ohne fehlgeschlagene Tests. Diese Fixture-Prüfungen verbrauchen keine Provider-Credits.
+- `npm run smoke:live`: Mauerfall, etwa 20 Sekunden, „Belegt“, drei registrierte Fundstellen und drei erfolgreich gelesene Quellen. Eine zusätzliche YouTube-Quelle war unzugänglich; Status deshalb `partial`, ohne technischen Analysefehler.
+- `POST /api/inputs/image`: künstliches PNG-Textbild mit gut lesbarem Mauerfall-Satz, 200, `legible:true`, Text korrekt erkannt, etwa 1,6 Sekunden. Kein Nachweis einer allgemeinen OCR-Genauigkeit für Fotos oder schwierige Screenshots.
+- `POST /api/inputs/post`: öffentliche Beschreibung von [CORRECTIV zum CO2-Gewächshaus-Vergleich](https://www.instagram.com/p/DNitxrrsEWv/), 200, etwa 1,6 Sekunden. Nur die Beschreibung wurde gelesen, kein Video oder Bild.
+- TikTok-Reader mit drei öffentlich indexierten Links ausprobiert: [Rheinische Post](https://www.tiktok.com/@rheinischepost/video/6956938375068667142) und [ZDF](https://www.tiktok.com/@zdf/video/7329939770686115104) lieferten `not_found`, [Volker Quaschning](https://www.tiktok.com/@vquaschning/video/7390749953942981920) `rate_limited`. Die API bot jeweils Screenshot/Text als Ausweichweg an. Ein erfolgreicher TikTok-Import ist damit weiterhin **nicht** live nachgewiesen. Suchindex-Treffer beweisen keine aktuelle Abrufbarkeit.
+
+### Zusätzlicher Befund: Prüfbarkeit wurde mit Wahrheit verwechselt
+
+Der echte Extraktionsaufruf stufte sowohl die klare Gegenbehauptung „Kohlendioxid trägt nicht zur Erderwärmung bei“ als auch den behaupteten Belegschluss aus dem Gewächshaus-Einsatz als `opinion` ein. Der Controller übersprang folgerichtig die Recherche. Derselbe Fehler trat ohne Post-Herkunft auf und ließ sich auf den reinen Provider-Aufruf reduzieren; UI und Post-Reader waren nicht die Ursache.
+
+`ClaimSchema.checkability` enthielt nur vier Enum-Werte ohne Bedeutungsbeschreibung. Ergänzt wurde eine allgemeine Schema-Beschreibung: Auch falsche, negierte, umstrittene oder kausale Tatsachenbehauptungen sind sachlich prüfbar; subjektive Werturteile bleiben Meinungen. Es gibt keine inhaltliche Sonderbehandlung für Klima, CO2, den Mauerfall oder bestimmte Ergebnislabels. Budget, Validierung und Rechercheablauf sind unverändert.
+
+Reproduzierbarer echter Regressionstest: `npm run smoke:classification`. Drei kurze Extraktionsaufrufe, keine Websuche; benötigt den gewählten Modellschlüssel und verbraucht Credits. Erwartungen stehen als feste Fälle im Skript. Vor der Änderung scheiterten zwei von drei Fällen (beide Tatsachenbehauptungen als Meinung); nach der Schema-Beschreibung bestanden alle drei, einschließlich des unveränderten Werturteils. Dieser kleine Modelltest ersetzt keine breite Evaluation und bleibt bewusst außerhalb des schlüssellosen `npm test`.
+
+Erneute vollständige Live-Läufe nach der Korrektur:
+
+- Klare CO2-Gegenbehauptung: nun `checkable`, etwa 23 Sekunden, „Widersprochen“, 15 registrierte Fundstellen. Drei Quellen lesbar, ein PDF nicht abrufbar; korrekt `partial`, keine technischen Analysehinweise.
+- Ursprünglicher Instagram-Ablauf: Beschreibung einlesen, die darin besprochene Gegenbehauptung ausdrücklich auswählen/bearbeiten, bestätigen und recherchieren. Etwa 15 Sekunden, „Widersprochen“, fünf registrierte Fundstellen, drei gelesene Quellen, eine Zusatzquelle unzugänglich. Herkunft `post`, Plattform Instagram, Umfang `caption` und `edited:true` blieben im Ergebnis erhalten. CORRECTIV vertritt die Gegenbehauptung nicht, sondern ordnet sie als irreführend ein; getestet wurde die gezielt ausgewählte Gegenbehauptung.
+
+Ausstehend bleiben tatsächliche Rechnungsbeträge/Tokenkosten, ein erfolgreicher realer TikTok-Import, eine umfassende manuelle Bewertung der Belegqualität, Screenreader-Prüfung und Pitch-Generalprobe. Die gemessenen Einzelläufe liefern keine allgemeine Genauigkeits- oder Latenzgarantie.
