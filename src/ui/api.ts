@@ -1,4 +1,4 @@
-import type { Run } from '../schemas/contracts';
+import type { Claim, Run } from '../schemas/contracts';
 
 export interface InputCapabilities {
   image: boolean;
@@ -30,7 +30,7 @@ export interface PostReading {
 
 /** An error the server explained in German; `fallback` lists the input paths that can still work. */
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly details: { code?: string; reason?: string; fallback?: string[] } = {}) {
+  constructor(message: string, readonly status: number, readonly details: { code?: string; reason?: string; fallback?: string[]; claims?: Claim[] } = {}) {
     super(message);
     this.name = 'ApiError';
   }
@@ -40,7 +40,7 @@ const GENERIC = 'Die Anfrage ist fehlgeschlagen. Bitte versuche es erneut.';
 async function read<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(typeof data?.error === 'string' ? data.error : GENERIC, response.status, { code: data?.code, reason: data?.reason, fallback: data?.fallback });
+    throw new ApiError(typeof data?.error === 'string' ? data.error : GENERIC, response.status, { code: data?.code, reason: data?.reason, fallback: data?.fallback, claims: Array.isArray(data?.claims) ? data.claims : undefined });
   }
   return data as T;
 }

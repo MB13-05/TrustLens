@@ -54,3 +54,45 @@ it('reports the configured model provider without exposing keys',async()=>{
  const app=setup({modelProviderName:'OpenRouter (google/gemini-2.5-flash)'});const config=await request(app).get('/api/config').expect(200);
  expect(config.body).toMatchObject({liveAvailable:true,providers:{model:'OpenRouter (google/gemini-2.5-flash)',search:'Firecrawl',fetch:'Direkter Abruf öffentlicher Webseiten'},inputs:{image:false,post:false}});
 });
+
+it('returns selectable claims instead of a dead end when an edited statement is split',async()=>{
+ const text='Die aktuelle deutsche Regierung wird durch Lobbyverbände beeinflusst, sodass die Energiewende ausgebremst wird.';
+ const parts=[{...claim,normalizedText:'Lobbyverbände beeinflussen die aktuelle deutsche Regierung.',originalText:text,locationScope:'Deutschland'}, {...claim,id:'c2',normalizedText:'Der Einfluss von Lobbyverbänden auf die aktuelle deutsche Regierung bremst die Energiewende aus.',originalText:text,locationScope:'Deutschland'}];let extractions=0;
+ const app=setup({liveProviders:{...providers,model:async(task:Parameters<Providers['model']>[0],data:unknown,signal:AbortSignal)=>task==='extract'?{claims:++extractions===1?[parts[0]]:parts}:providers.model(task,data,signal)}});
+ const agent=request.agent(app);const first=await agent.post('/api/claims').send({text,mode:'live'}).expect(200);
+ const split=await agent.post('/api/runs').send({claim:{...first.body.claims[0],normalizedText:text},mode:'live'}).expect(409);
+ expect(split.body.code).toBe('claim_selection_required');expect(split.body.claims.map((c:{normalizedText:string})=>c.normalizedText)).toEqual(parts.map(c=>c.normalizedText));expect(split.body.id).toBeUndefined();
+ await request(app).post('/api/runs').send({claim:split.body.claims[0],mode:'live'}).expect(400);
+ const confirmed=await agent.post('/api/runs').send({claim:split.body.claims[0],mode:'live'}).expect(201);
+ expect(confirmed.body.counters.model).toBe(1);expect(extractions).toBe(2);
+});
+it('explains a zero-claim revalidation without claiming that the user entered several statements',async()=>{
+ let extractions=0;const app=setup({liveProviders:{...providers,model:async()=>({claims:++extractions===1?[claim]:[]})}});const agent=request.agent(app);
+ const first=await agent.post('/api/claims').send({text:claim.normalizedText,mode:'live'});
+ const result=await agent.post('/api/runs').send({claim:{...first.body.claims[0],normalizedText:'Unklare neue Formulierung'},mode:'live'}).expect(400);
+ expect(result.body.code).toBe('no_claims');expect(result.body.error).toContain('konkrete Aussage');
+});
+
+it('researches an unclear claim with explicit consent and preserves evidence without a strong overall verdict',async()=>{
+ const uncertain={...claim,normalizedText:'Lobbyverbände beeinflussen diese Regierung.',originalText:'Lobbyverbände beeinflussen diese Regierung.',checkability:'unclear'};
+ const p:Providers={...providers,model:async(task,data)=>{
+  if(task==='extract')return {claims:[uncertain]};
+  if(task==='plan')return {queries:['Lobbyverbände Regierung dokumentierter Einfluss']};
+  if(task==='verify')return {sound:true,issues:[]};
+  return {evidence:[{id:'e1',claimId:'c1',sourceId:'s1',chunkId:'s1:p1',exactQuote:'Es gab ein Treffen.',relation:'supports',scopeMatch:true,limitations:[]}],verdict:{claimId:'c1',label:'Belegt',summary:'Die ganze Aussage ist belegt.',reasoningItems:[{text:'Die Quelle dokumentiert ein Treffen.',evidenceIds:['e1']}],evidenceIds:['e1'],limitations:[]},gap:null,followUpQuery:null};
+ },search:async()=>[{url:'https://example.org/document',title:'Dokument'}],fetch:async url=>({requestedUrl:url,finalUrl:url,title:'Dokument',publisher:'Testquelle',publishedAt:null,updatedAt:null,text:'Es gab ein Treffen.'})};
+ const app=setup({liveProviders:p});const agent=request.agent(app);const found=await agent.post('/api/claims').send({text:uncertain.normalizedText,mode:'live'});
+ const blocked=await agent.post('/api/runs').send({claim:found.body.claims[0],mode:'live'}).expect(400);expect(blocked.body.code).toBe('unclear_scope');
+ const started=await agent.post('/api/runs').send({claim:found.body.claims[0],mode:'live',allowUnclear:true}).expect(201);
+ await new Promise(r=>setTimeout(r,40));const result=await agent.get('/api/runs/'+started.body.id).expect(200);
+ expect(result.body.result.claim.checkability).toBe('unclear');expect(result.body.result.verdict.label).toBe('Ungeklärt');expect(result.body.result.verdict.limitations.join(' ')).toContain('offene Bezüge');
+ expect(result.body.result.evidence).toHaveLength(1);expect(result.body.counters.search).toBe(1);expect(result.body.counters.model).toBeLessThanOrEqual(7);
+});
+it('can research an unresolved relative date without silently using today as its origin',async()=>{
+ const relative={...claim,normalizedText:'Ab nächstem Monat ist Busfahren kostenlos.',originalText:'Ab nächstem Monat ist Busfahren kostenlos.',timeScope:null};
+ const app=setup({liveProviders:{...providers,model:async(task:Parameters<Providers['model']>[0],data:unknown,signal:AbortSignal)=>task==='extract'?{claims:[relative]}:providers.model(task,data,signal)}});const agent=request.agent(app);
+ const found=await agent.post('/api/claims').send({text:relative.normalizedText,mode:'live'});
+ await agent.post('/api/runs').send({claim:found.body.claims[0],mode:'live'}).expect(400);
+ const started=await agent.post('/api/runs').send({claim:found.body.claims[0],mode:'live',allowUnclear:true}).expect(201);await new Promise(r=>setTimeout(r,40));const result=await agent.get('/api/runs/'+started.body.id);
+ expect(result.body.result.claim.timeScope).toBeNull();expect(result.body.result.claim.normalizedText).toBe(relative.normalizedText);expect(result.body.counters.search).toBeGreaterThan(0);expect(result.body.result.verdict.label).toBe('Ungeklärt');
+});

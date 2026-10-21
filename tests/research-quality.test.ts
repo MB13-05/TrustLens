@@ -1,7 +1,7 @@
 import {it,expect,afterEach,describe} from 'vitest';
 import request from 'supertest';
 import {createApp} from '../src/api/app.js';
-import type {Providers,ModelTask} from '../src/tools/providers.js';
+import {ModelOutputError,ProviderError,type Providers,type ModelTask} from '../src/tools/providers.js';
 import type {Analysis,Claim,Evidence,SourceChunk} from '../src/schemas/contracts.js';
 
 /** Research-quality regression tests. The scripted "model" reads the registered chunks it is given, like a real one. */
@@ -193,5 +193,30 @@ describe('live progress',()=>{
   release();
   const done=await (async()=>{for(let i=0;i<200;i++){const next=(await agent.get('/api/runs/'+started.id)).body;if(next.result)return next;await new Promise(r=>setTimeout(r,10));}throw Error('no result');})();
   expect(done.found).toHaveLength(4);
+ });
+});
+
+describe('provider output correction context',()=>{
+ it('passes the rejected structured report and exact schema issues into its single correction',async()=>{
+  const invalid={evidence:[{exactQuote:'x'.repeat(301)}]};
+  const {providers,calls}=setup((task,data)=>{
+   if(task==='analyze')throw new ModelOutputError(invalid,['evidence.0.exactQuote: maximum 300 characters']);
+   return baseModel()(task,data);
+  });
+  const run=await runToEnd(providers);
+  expect(run.result.verdict.label).toBe('Belegt');
+  expect(calls.repair).toHaveLength(1);
+  expect(calls.repair[0]).toMatchObject({invalidReport:invalid,issues:['evidence.0.exactQuote: maximum 300 characters']});
+  expect(JSON.stringify(run)).not.toContain('maximum 300 characters');
+ });
+ it('requests a compact report after a token cutoff without extra retries',async()=>{
+  const {providers,calls}=setup((task,data)=>{
+   if(task==='analyze')throw new ProviderError('cutoff',false,'output_limit');
+   return baseModel()(task,data);
+  });
+  const run=await runToEnd(providers);
+  expect(run.result.verdict.label).toBe('Belegt');
+  expect(calls.repair).toHaveLength(1);
+  expect((calls.repair[0] as {issues:string[]}).issues.join(' ')).toMatch(/abgeschnitten.*sechs Belegen/);
  });
 });

@@ -93,7 +93,7 @@ Abgedeckt sind unter anderem: Mauerfall-Muster mit umformatierten Zitaten, falsc
 ## Verträge und Laufgrenzen
 
 - `POST /api/claims` mit `{text, mode}` → `{claims}`.
-- `POST /api/runs` mit `{claim, mode}` → Lauf mit ID.
+- `POST /api/runs` mit `{claim, mode, allowUnclear?:boolean}` → Lauf mit ID. Unklare Bezüge benötigen ausdrücklich `allowUnclear:true`; andernfalls `unclear_scope`. Bearbeitete zusammengesetzte Aussagen liefern 409 mit `claim_selection_required` und neu auswählbaren `claims`.
 - `GET /api/runs/:id` → Zustand, Ereignisse und Ergebnis.
 - `POST /api/runs/:id/cancel` → gestoppter Lauf.
 - `GET /api/config` → Provider-Namen, Live-Verfügbarkeit und `inputs` (verfügbare Eingabewege samt Grenzen), keine Schlüssel.
@@ -118,3 +118,12 @@ Live-Adapter sind mit Provider-Vertragsfixtures getestet. **Am 21. Oktober 2026 
 Der direkte Abruf unterstützt öffentliche HTML-/Textseiten; JavaScript-only-Seiten, PDFs, Paywalls, komprimierte Antworten und Bot-Sperren können unzugänglich bleiben. Ein ehrliches Teilresultat nennt diese Grenzen. Veröffentlichungsdaten stammen, falls vorhanden, aus Seitenmetadaten; ihr Fehlen bleibt `null`. Herkunftsgruppen verwenden konservativ die Domain und behaupten keine Unabhängigkeit; ein gemeinsamer Ursprung über unterschiedliche Domains wird derzeit nur durch die Beleganalyse erkannt. Wörtliche Zitierprüfung beweist keine inhaltliche Folgerichtigkeit; auch die separate Modellprüfung kann Fehler machen.
 
 Keine Konten, Datenbank oder öffentliche Historie. Es gibt keine Artikel-URL-Eingabe und keine Auswertung von Video, Ton oder Deepfakes. Bilder und Posts nur im Live-Modus. Der flüchtige Einprozess-Server ist für lokale Erprobung gedacht. Öffentliche Bereitstellung benötigt zusätzlich HTTPS, Prüfung der Anbieter- und Plattformbedingungen und eine zur Infrastruktur passende gemeinsame Raten-/Sitzungsverwaltung. Es wurde nichts veröffentlicht.
+
+
+### Aktuelle Korrekturen und Übergabe (21. Oktober 2026)
+
+Die Auswahl bietet bei offenen Bezügen **Trotzdem prüfen**. Fehlende Akteure, Orte oder Daten werden nicht ergänzt; offene Bezüge begrenzen das Gesamturteil auf „Ungeklärt“. Wird eine bearbeitete Aussage in mehrere Teilbehauptungen zerlegt, kehrt die Oberfläche zur ausdrücklichen Auswahl zurück.
+
+Generierte Berichte sind auf sechs Fundstellen und vier Begründungspunkte begrenzt; das Limit von 5.000 Ausgabetokens und die wörtliche Zitatprüfung bleiben bestehen. Die einzige Reparatur erhält konkrete Schemafehler samt zurückgewiesenem Bericht. Abgeschnittene OpenRouter-Antworten werden als solche erkannt. Bei technisch gescheiterter Auswertung zeigt die Oberfläche eine technische Einschränkung.
+
+Validierung: 245 Vitest-Tests, 15 gezielte Playwright-Tests auf drei Ansichten und Produktionsbuild erfolgreich. **Die Live-Belegzuordnung ist weiterhin nicht zuverlässig:** Ein Diagnoselauf mit den vier gemeldeten URLs lieferte sechs gültige Fundstellen, scheiterte aber bei einer Ergänzung. Der anschließende echte Suchlauf für „Lobbyverbände haben eine konkrete Entscheidung zur Energiewende beeinflusst.“ endete nach 21,1 Sekunden mit vier gelesenen Quellen und null verwendbaren Belegen nach der Reparatur. Der nächste Agent soll diesen Fehler gezielt reproduzieren; der Übergabeprompt steht im Commit-Body. Diese Änderung behauptet keine vollständige Behebung.

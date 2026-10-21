@@ -12,7 +12,7 @@ const PAGES: Record<string, { title: string; text: string }> = {
   'https://en.wikipedia.org/wiki/Fall_of_the_Berlin_Wall': { title: 'Fall of the Berlin Wall', text: 'The fall of the Berlin Wall happened on 9 November 1989,\nduring the Peaceful Revolution.' },
   'https://www.lpb-bw.de/fall-der-berliner-mauer': { title: 'Fall der Berliner Mauer', text: 'Am Abend des 9. November 1989 wurde die Grenze nach West-Berlin geöffnet.' },
 };
-const claimFor = (text: string): Claim => ({ id: 'c1', originalText: text, normalizedText: text, timeScope: null, locationScope: null, entities: [], checkability: /schlecht|beste/i.test(text) ? 'opinion' : 'checkable' });
+const claimFor = (text: string): Claim => ({ id: 'c1', originalText: text, normalizedText: text, timeScope: null, locationScope: null, entities: [], checkability: /schlecht|beste/i.test(text) ? 'opinion' : text.includes('diese Regierung') ? 'unclear' : 'checkable' });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** The quotation is the whole source line that contains the needle, copied character by character. */
@@ -23,7 +23,7 @@ function quoteFrom(chunks: SourceChunk[], needle: string) {
 function analyze(claim: Claim, chunks: SourceChunk[]): Analysis {
   const text = claim.normalizedText;
   if (/FEHLERFALL/.test(text)) {
-    return { evidence: [{ id: 'e1', claimId: 'c1', sourceId: 's1', chunkId: 's1:p1', exactQuote: 'Dieser Satz steht in keiner Quelle.', relation: 'supports', scopeMatch: true, limitations: [] }], verdict: { claimId: 'c1', label: 'Belegt', summary: 'Erfunden.', reasoningItems: [{ text: 'Erfunden.', evidenceIds: ['e1'] }], evidenceIds: ['e1'], limitations: [] }, gap: null, followUpQuery: null };
+    return { evidence: [{ id: 'e1', claimId: claim.id, sourceId: 's1', chunkId: 's1:p1', exactQuote: 'Dieser Satz steht in keiner Quelle.', relation: 'supports', scopeMatch: true, limitations: [] }], verdict: { claimId: claim.id, label: 'Belegt', summary: 'Erfunden.', reasoningItems: [{ text: 'Erfunden.', evidenceIds: ['e1'] }], evidenceIds: ['e1'], limitations: [] }, gap: null, followUpQuery: null };
   }
   if (/Mauer/.test(text) && /1989/.test(text)) {
     const first = quoteFrom(chunks, 'bis zum 9. November 1989');
@@ -32,11 +32,11 @@ function analyze(claim: Claim, chunks: SourceChunk[]): Analysis {
     const rel = wrong ? 'contradicts' : 'supports';
     return {
       evidence: [
-        { id: 'e1', claimId: 'c1', sourceId: first.chunk.sourceId, chunkId: first.chunk.id, exactQuote: first.quote, relation: rel, scopeMatch: true, limitations: [] },
-        { id: 'e2', claimId: 'c1', sourceId: second.chunk.sourceId, chunkId: second.chunk.id, exactQuote: second.quote, relation: rel, scopeMatch: true, limitations: ['Regionale Landeszentrale; keine Primärquelle.'] },
+        { id: 'e1', claimId: claim.id, sourceId: first.chunk.sourceId, chunkId: first.chunk.id, exactQuote: first.quote, relation: rel, scopeMatch: true, limitations: [] },
+        { id: 'e2', claimId: claim.id, sourceId: second.chunk.sourceId, chunkId: second.chunk.id, exactQuote: second.quote, relation: rel, scopeMatch: true, limitations: ['Regionale Landeszentrale; keine Primärquelle.'] },
       ],
       verdict: {
-        claimId: 'c1', label: wrong ? 'Widersprochen' : 'Belegt',
+        claimId: claim.id, label: wrong ? 'Widersprochen' : 'Belegt',
         summary: wrong ? 'Die Quellen nennen den 9. November 1989, nicht den 3. Oktober.' : 'Mehrere Quellen nennen den 9. November 1989 als Tag des Mauerfalls.',
         reasoningItems: [{ text: 'Die Stiftung Berliner Mauer nennt den 9. November 1989 als Ende der Grenzsperrung.', evidenceIds: ['e1'] }, { text: 'Die Landeszentrale bestätigt die Grenzöffnung am Abend dieses Tages.', evidenceIds: ['e2'] }],
         evidenceIds: ['e1', 'e2'], limitations: ['Die Mauer wurde danach schrittweise abgebaut; hier geprüft wird nur das Datum der Grenzöffnung.'],
@@ -44,13 +44,20 @@ function analyze(claim: Claim, chunks: SourceChunk[]): Analysis {
       gap: null, followUpQuery: null,
     };
   }
-  return { evidence: [], verdict: { claimId: 'c1', label: 'Ungeklärt', summary: 'Die gelesenen Quellen nennen dazu nichts Belastbares.', reasoningItems: [], evidenceIds: [], limitations: ['Keine der gelesenen Quellen behandelt diese Aussage direkt.'] }, gap: null, followUpQuery: null };
+  return { evidence: [], verdict: { claimId: claim.id, label: 'Ungeklärt', summary: 'Die gelesenen Quellen nennen dazu nichts Belastbares.', reasoningItems: [], evidenceIds: [], limitations: ['Keine der gelesenen Quellen behandelt diese Aussage direkt.'] }, gap: null, followUpQuery: null };
 }
 
 const providers: Providers = {
   async model(task, data) {
     const input = data as Record<string, unknown>;
-    if (task === 'extract') return { claims: [claimFor(String(input.text))] };
+    if (task === 'extract') {
+      const text=String(input.text);
+      if(text==='Die aktuelle deutsche Regierung wird durch Lobbyverbände beeinflusst, sodass die Energiewende ausgebremst wird.')return {claims:[
+        {...claimFor('Lobbyverbände beeinflussen die aktuelle deutsche Regierung.'),originalText:text},
+        {...claimFor('Der Einfluss von Lobbyverbänden auf die aktuelle deutsche Regierung bremst die Energiewende aus.'),originalText:text},
+      ]};
+      return {claims:[claimFor(text)]};
+    }
     if (task === 'plan') return { queries: ['Fixture-Suche'] };
     if (task === 'verify') return { sound: true, issues: [] };
     return analyze(input.claim as Claim, input.chunks as SourceChunk[]);

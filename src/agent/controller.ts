@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {selectPassages} from '../evidence/passages.js';
 import {outputSchemas} from '../schemas/model.js';
 import {type Claim,type InputOrigin,type Run,type Source,type SourceChunk,type Result,type Analysis} from '../schemas/contracts.js';
-import type {Providers,ModelTask} from '../tools/providers.js';
+import {ModelOutputError,ProviderError,type Providers,type ModelTask} from '../tools/providers.js';
 import {unresolved,technicalFailure,validateReport,ReportValidationError} from '../evidence/report.js';
 
 const limits={model:7,search:4,fetch:6};
@@ -42,9 +42,18 @@ export class RunController {
   finally{signal.removeEventListener('abort',stop);}
  }
  private async model(task:ModelTask,data:unknown){try{return await this.operation('model',()=>this.providers.model(task,data,this.abort.signal));}catch(error){if(!this.stopped)this.modelFailures++;throw error;}}
- private context(){return {claim:this.claim,sources:this.sources,chunks:this.chunks,previousQueries:this.queries,remainingBudget:{model:limits.model-this.run.counters.model,search:limits.search-this.run.counters.search,fetch:limits.fetch-this.run.counters.fetch}};}
+ private scopeLimitations(){return this.claim.checkability==='unclear'?['Die Aussage enthält offene Bezüge. Fehlende Akteure, Orte oder Zeitangaben wurden nicht ergänzt; die Fundstellen erlauben deshalb keine eindeutige Bewertung der gesamten Aussage.']:[];}
+ private context(){return {claim:this.claim,scopeLimitations:this.scopeLimitations(),sources:this.sources,chunks:this.chunks,previousQueries:this.queries,remainingBudget:{model:limits.model-this.run.counters.model,search:limits.search-this.run.counters.search,fetch:limits.fetch-this.run.counters.fetch}};}
  private queries:string[]=[];
- private result(analysis:Analysis):Result{return {claim:this.claim,checkedAt:new Date().toISOString(),verdict:analysis.verdict,evidence:analysis.evidence,sources:this.sources.map(s=>({...s})),chunks:this.chunks.map(c=>({...c})),technicalNotes:[...this.technicalNotes],...(this.input?{input:this.input}:{})};}
+ private result(analysis:Analysis):Result{
+  const scopeLimitations=this.scopeLimitations();
+  const verdict={...analysis.verdict,limitations:[...new Set([...analysis.verdict.limitations,...scopeLimitations])]};
+  if(scopeLimitations.length&&this.isStrong(analysis)){
+   verdict.label='Ungeklärt';
+   verdict.summary='Die Recherche hat Fundstellen zur Aussage gefunden. Wegen der offenen Bezüge lässt sich die gesamte Aussage damit nicht eindeutig bewerten.';
+  }
+  return {claim:this.claim,checkedAt:new Date().toISOString(),verdict,evidence:analysis.evidence,sources:this.sources.map(s=>({...s})),chunks:this.chunks.map(c=>({...c})),technicalNotes:[...this.technicalNotes],...(this.input?{input:this.input}:{})};
+ }
  private finishStopped(status:'partial'|'cancelled',message:string){
   this.stopped=true;clearTimeout(this.timer);this.abort.abort();this.run.status=status;
   // An unfinished evaluation is never presented as a strong verdict.
@@ -93,12 +102,12 @@ export class RunController {
   for(const candidate of candidates){let host='';try{host=new URL(candidate.url).hostname;}catch{}(known.has(host)?repeated:fresh).push(candidate);known.add(host);}
   return [...fresh,...repeated];
  }
- private issuesOf(error:unknown):string[]{return error instanceof ReportValidationError?error.issues:['Die Antwort war unvollständig oder entsprach nicht dem vorgegebenen Datenformat.'];}
+ private issuesOf(error:unknown):string[]{if(error instanceof ModelOutputError)return error.issues;if(error instanceof ProviderError&&error.code==='output_limit')return ['Der Bericht wurde am Ausgabelimit abgeschnitten. Erstelle einen deutlich kürzeren vollständigen Bericht mit höchstens sechs Belegen und vier Begründungspunkten. Wiederhole keine Fundstellen und kopiere nur kurze, vollständige Zitate.'];return error instanceof ReportValidationError?error.issues:['Die Antwort war unvollständig oder entsprach nicht dem vorgegebenen Datenformat.'];}
  /** One validated analysis, with at most one correction that is told exactly what was wrong. `degraded` marks a system fallback, never a research finding. */
  private async analyze():Promise<{analysis:Analysis;degraded:boolean}>{
   let raw:unknown;let issues:string[];
   try{raw=await this.model('analyze',this.context());return {analysis:validateReport(raw,this.claim,this.sources,this.chunks),degraded:false};}
-  catch(error){this.assertActive();issues=this.issuesOf(error);}
+  catch(error){this.assertActive();if(error instanceof ModelOutputError)raw=error.output;issues=this.issuesOf(error);}
   if(this.repaired||this.run.counters.model>=limits.model)return {analysis:technicalFailure(this.claim),degraded:true};
   this.repaired=true;this.event('Ungültige Belegverweise werden überprüft');
   try{raw=await this.model('repair',{...this.context(),invalidReport:raw??null,issues});return {analysis:validateReport(raw,this.claim,this.sources,this.chunks),degraded:false};}
@@ -129,7 +138,7 @@ export class RunController {
     const a=unresolved(this.claim,['Meinung oder derzeit nicht überprüfbare Prognose.']);a.verdict.label='Nicht sachlich prüfbar';a.verdict.summary='Diese Aussage ist ein Werturteil oder eine derzeit nicht sachlich prüfbare Prognose.';this.analysis=a;
    }else{
     this.run.status='researching';
-    const plan=outputSchemas.plan.parse(await this.model('plan',{claim:this.claim}));
+    const plan=outputSchemas.plan.parse(await this.model('plan',{claim:this.claim,scopeLimitations:this.scopeLimitations()}));
     this.run.counters.rounds=1;await this.collect(plan.queries);
     this.run.status='evaluating';this.event('Belege und Zeitbezug werden geprüft');
     const first=await this.analyze();this.analysis=first.analysis;degraded=first.degraded;

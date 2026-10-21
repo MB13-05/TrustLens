@@ -82,7 +82,7 @@ function Report({ run, result }: { run: Run; result: Result }) {
           <span className="verdict-label"><span aria-hidden="true">{style.icon}</span>{result.verdict.label}</span>
           <p className="verdict-summary">{result.verdict.summary}</p>
         </div>
-        <p className="meta-line">{style.meaning} Geprüft am {formatDateTime(result.checkedAt)}.</p>
+        <p className="meta-line">{result.technicalNotes.length > 0 && result.evidence.length === 0 ? 'Die technische Auswertung ist unvollständig.' : style.meaning} Geprüft am {formatDateTime(result.checkedAt)}.</p>
         {origin && <p className="origin-note">{origin}{postUrl && <> <a href={postUrl} target="_blank" rel="noopener noreferrer">Beitrag öffnen ↗</a></>}</p>}
       </div>
       <Notices run={run} result={result} />

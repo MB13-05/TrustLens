@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Claim, Run } from '../schemas/contracts';
-import { api, errorMessage, normalizeRun, type AppConfig } from './api';
+import { api, ApiError, errorMessage, normalizeRun, type AppConfig } from './api';
 import { ClaimsScreen } from './components/ClaimsScreen';
 import { ErrorNotice, ScreenHeading } from './components/common';
 import { ImageInput } from './components/ImageInput';
@@ -25,10 +25,12 @@ export function App() {
   const [tab, setTab] = useState<InputKind>('text');
   const [claims, setClaims] = useState<Claim[]>([]);
   const [selected, setSelected] = useState(0);
+  const [claimNotice, setClaimNotice] = useState('');
   const [edited, setEdited] = useState('');
   const [timeScope, setTimeScope] = useState('');
   const [originNote, setOriginNote] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState<Claim | null>(null);
+  const [submitted, setSubmitted] = useState<{claim:Claim;allowUnclear:boolean} | null>(null);
+  const [unclearScope, setUnclearScope] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -66,10 +68,10 @@ export function App() {
 
   function setScreen(next: Screen) { setNavigated(true); setScreenState(next); }
   function changeMode(next: Mode) { setMode(next); setModeTouched(true); setError(''); }
-  function selectClaim(items: Claim[], index: number) { setSelected(index); setEdited(items[index]!.normalizedText); setTimeScope(items[index]!.timeScope ?? ''); }
+  function selectClaim(items: Claim[], index: number) { setUnclearScope(false); setSelected(index); setEdited(items[index]!.normalizedText); setTimeScope(items[index]!.timeScope ?? ''); }
 
   async function detect(text: string, inputId?: string, note: string | null = null) {
-    setError(''); setBusy(true);
+    setError(''); setClaimNotice(''); setBusy(true);
     try {
       const data = await api<{ claims: Claim[] }>('/api/claims', { text, mode, ...(inputId ? { source: { inputId } } : {}) });
       if (!data.claims.length) throw new Error('Keine überprüfbare Behauptung erkannt. Bitte formuliere die Aussage genauer.');
@@ -77,18 +79,24 @@ export function App() {
     } catch (failure) { setError(errorMessage(failure, 'Behauptungen konnten nicht erkannt werden.')); }
     finally { setBusy(false); }
   }
-  async function startRun(claim: Claim) {
+  async function startRun(claim: Claim, allowUnclear = false) {
     setError(''); setBusy(true);
     try {
-      const next = normalizeRun(await api<Run>('/api/runs', { claim, mode }));
-      setSubmitted(claim); setRun(next); setPollFailed(false); setScreen(terminal.has(next.status) ? 'result' : 'progress');
-    } catch (failure) { setError(errorMessage(failure, 'Die Recherche konnte nicht gestartet werden.')); }
+      const next = normalizeRun(await api<Run>('/api/runs', { claim, mode, allowUnclear }));
+      setUnclearScope(false); setClaimNotice(''); setSubmitted({claim,allowUnclear}); setRun(next); setPollFailed(false); setScreen(terminal.has(next.status) ? 'result' : 'progress');
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.details.code === 'claim_selection_required' && failure.details.claims?.length) {
+        const choices = failure.details.claims;
+        setClaims(choices); selectClaim(choices, 0); setClaimNotice(failure.message); setScreen('claims');
+      } else if (failure instanceof ApiError && failure.details.code === 'unclear_scope') {setUnclearScope(true);setScreen('claims');}
+      else setError(errorMessage(failure, 'Die Recherche konnte nicht gestartet werden.'));
+    }
     finally { setBusy(false); }
   }
-  function confirmClaim() {
+  function confirmClaim(allowUnclear = false) {
     const claim = claims[selected]!;
     if (!edited.trim()) { setError('Bitte bestätige eine konkrete, nicht leere Aussage.'); return; }
-    void startRun({ ...claim, normalizedText: edited.trim(), timeScope: timeScope.trim() || null });
+    void startRun({ ...claim, normalizedText: edited.trim(), timeScope: timeScope.trim() || null }, allowUnclear);
   }
   async function cancel() {
     if (!run) return;
@@ -99,7 +107,7 @@ export function App() {
   }
   function reset() { setRun(null); setScreen('input'); setError(''); setPollFailed(false); }
   function editClaim() { setRun(null); setError(''); setScreen(claims.length ? 'claims' : 'input'); }
-  function retry() { if (submitted) void startRun(submitted); else reset(); }
+  function retry() { if (submitted) void startRun(submitted.claim,submitted.allowUnclear); else reset(); }
 
   return (
     <div className="app">
@@ -144,8 +152,8 @@ export function App() {
             </div>
           </section>
         )}
-        {screen === 'claims' && <ClaimsScreen claims={claims} selected={selected} edited={edited} timeScope={timeScope} originNote={originNote} busy={busy} onSelect={index => selectClaim(claims, index)} onEdit={setEdited} onTimeScope={setTimeScope} onSubmit={confirmClaim} onBack={() => { setScreen('input'); setError(''); }} />}
-        {screen === 'progress' && run && <ProgressScreen run={run} claimText={submitted?.normalizedText ?? edited} busy={busy} pollFailed={pollFailed} onCancel={() => void cancel()} onRetryPoll={() => { setError(''); setPollRetry(value => value + 1); }} />}
+        {screen === 'claims' && <ClaimsScreen claims={claims} selected={selected} edited={edited} timeScope={timeScope} originNote={originNote} notice={claimNotice} allowUnclearAvailable={unclearScope} busy={busy} onSelect={index => selectClaim(claims, index)} onEdit={value=>{setEdited(value);setUnclearScope(false);}} onTimeScope={value=>{setTimeScope(value);setUnclearScope(false);}} onSubmit={confirmClaim} onBack={() => { setScreen('input'); setError(''); }} />}
+        {screen === 'progress' && run && <ProgressScreen run={run} claimText={submitted?.claim.normalizedText ?? edited} busy={busy} pollFailed={pollFailed} onCancel={() => void cancel()} onRetryPoll={() => { setError(''); setPollRetry(value => value + 1); }} />}
         {screen === 'result' && run && <ResultScreen run={run} onNew={reset} onRetry={retry} onEditClaim={editClaim} />}
       </main>
       <footer><span>TrustLens · Belege statt Bauchgefühl.</span><span>Öffentliche Quellen. Begrenzte Recherche. Offene Fragen.</span></footer>

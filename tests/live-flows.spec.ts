@@ -83,6 +83,8 @@ test.describe('research quality in the interface', () => {
     const notice = page.locator('.notice.technical');
     await expect(notice).toContainText('Technische Einschränkung – kein Befund über die Aussage');
     await expect(notice).toContainText('nicht zuverlässig ausgewertet');
+    await expect(page.locator('.verdict .meta-line')).toContainText('Die technische Auswertung ist unvollständig.');
+    await expect(page.locator('.verdict .meta-line')).not.toContainText('Die Belege reichen');
     await expect(page.locator('.limitations')).not.toContainText(/validier|Schema|Belegverweis/i);
     await expect(page.getByRole('heading', { name: 'Belege im Wortlaut' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Prüfung erneut starten' })).toBeVisible();
@@ -220,4 +222,48 @@ test.describe('input paths', () => {
     await page.getByRole('button', { name: 'Beitrag einlesen' }).click();
     await expect(page.getByRole('alert')).toContainText('Instagram und TikTok');
   });
+});
+
+
+test('edited compound statements return to selection and start only the explicitly chosen claim',async({page})=>{
+ const combined='Die aktuelle deutsche Regierung wird durch Lobbyverbände beeinflusst, sodass die Energiewende ausgebremst wird.';
+ const causal='Der Einfluss von Lobbyverbänden auf die aktuelle deutsche Regierung bremst die Energiewende aus.';
+ const submitted:unknown[]=[];
+ page.on('request',request=>{if(new URL(request.url()).pathname==='/api/runs'&&request.method()==='POST')submitted.push(request.postDataJSON());});
+ await openLive(page);await page.getByLabel('Dein Text').fill('Lobbyverbände beeinflussen die aktuelle deutsche Regierung.');
+ await page.getByRole('button',{name:'Behauptungen erkennen'}).click();
+ await page.getByLabel('Zu prüfende Formulierung').fill(combined);
+ await page.getByRole('button',{name:'Diese Aussage prüfen'}).click();
+ await expect(page.getByRole('status')).toContainText('Wähle eine Teilbehauptung aus.');
+ await expect(page.getByRole('radio')).toHaveCount(2);await expect(page.getByRole('alert')).toHaveCount(0);
+ await expect(page.getByRole('group',{name:'Erkannte Behauptungen'})).toBeFocused();
+ expect(submitted).toHaveLength(1);
+ await page.getByRole('radio').nth(1).check();await expect(page.getByLabel('Zu prüfende Formulierung')).toHaveValue(causal);
+ await page.getByRole('button',{name:'Diese Aussage prüfen'}).click();
+ await expect(page.getByRole('heading',{name:'Ergebnis mit Einschränkungen'})).toBeVisible({timeout:20000});
+ expect(submitted).toHaveLength(2);expect(submitted[1]).toMatchObject({claim:{id:'c2',normalizedText:causal}});
+ await expect(page.locator('.verdict')).toContainText(causal);
+});
+
+
+test('an unclear claim can explicitly be researched without inventing its missing scope',async({page})=>{
+ const text='Lobbyverbände beeinflussen diese Regierung.';
+ const requests:unknown[]=[];page.on('request',request=>{if(new URL(request.url()).pathname==='/api/runs'&&request.method()==='POST')requests.push(request.postDataJSON());});
+ await openLive(page);await page.getByLabel('Dein Text').fill(text);await page.getByRole('button',{name:'Behauptungen erkennen'}).click();
+ await expect(page.getByText('Recherche mit offenen Bezügen')).toBeVisible();
+ await page.getByRole('button',{name:'Trotzdem prüfen'}).click();
+ await expect(page.getByRole('heading',{name:'Ergebnis mit Einschränkungen'})).toBeVisible({timeout:20000});
+ expect(requests[0]).toMatchObject({claim:{normalizedText:text,checkability:'unclear',timeScope:null},allowUnclear:true});
+ await expect(page.locator('.results')).toContainText('offene Bezüge');await expect(page.getByRole('alert')).toHaveCount(0);
+ await page.getByText('Recherchehistorie & Laufgrenzen').click();await expect(page.locator('.history')).toContainText('Suche abgeschlossen');
+});
+test('a clarification response after editing offers research anyway instead of a dead end',async({page})=>{
+ const requests:unknown[]=[];page.on('request',request=>{if(new URL(request.url()).pathname==='/api/runs'&&request.method()==='POST')requests.push(request.postDataJSON());});
+ await openLive(page);await page.getByLabel('Dein Text').fill('Lobbyverbände beeinflussen die deutsche Regierung.');
+ await page.getByRole('button',{name:'Behauptungen erkennen'}).click();await page.getByLabel('Zu prüfende Formulierung').fill('Lobbyverbände beeinflussen diese Regierung.');
+ await page.getByRole('button',{name:'Diese Aussage prüfen'}).click();
+ await expect(page.getByRole('button',{name:'Trotzdem prüfen'})).toBeVisible();await expect(page.getByRole('alert')).toHaveCount(0);
+ await page.getByRole('button',{name:'Trotzdem prüfen'}).click();
+ await expect(page.getByRole('heading',{name:'Ergebnis mit Einschränkungen'})).toBeVisible({timeout:20000});
+ expect(requests).toHaveLength(2);expect(requests[1]).toMatchObject({allowUnclear:true});
 });

@@ -19,6 +19,13 @@ async function extract(providers:Providers,data:unknown,timeoutMs:number){
   return outputSchemas.extract.parse(await Promise.race([providers.model('extract',data,abort.signal),halted]));
  }finally{clearTimeout(timer);abort.signal.removeEventListener('abort',onAbort);}
 }
+/** Register a new selection batch in this session; nothing is researched until one item is confirmed. */
+function registerClaims(session:Session,items:Claim[],mode:'live'|'demo',input:InputOrigin){
+ const claims=items.map((claim,index)=>({...claim,id:'c'+(index+1)}));
+ session.claims.clear();
+ claims.forEach(claim=>session.claims.set(claim.id,{claim,mode,input}));
+ return claims;
+}
 export function createApp(options:Options={}){
  const app=express();const ttl=options.ttlMs??30*60_000;const sessions=new Map<string,Session>();let globalRequests:number[]=[];
  const prune=()=>{const now=Date.now();for(const [id,s] of sessions){for(const [runId,c] of s.runs)if(Date.parse(c.run.expiresAt)<=now){c.dispose();s.runs.delete(runId);}if(s.expires<=now){s.runs.forEach(c=>c.dispose());sessions.delete(id);}}};
@@ -71,15 +78,13 @@ export function createApp(options:Options={}){
   try{
    const output=await extract(providers,{text},Math.min(options.deadlineMs??90_000,25_000));
    if(s.expires<=Date.now())throw Error('expired');
-   s.claims.clear();
-   const claims=output.claims.map((c,i)=>({...c,id:'c'+(i+1)}));
-   claims.forEach(c=>s.claims.set(c.id,{claim:c,mode,input}));res.json({claims});
+   res.json({claims:registerClaims(s,output.claims,mode,input)});
   }catch{res.status(502).json({error:'Die Behauptungserkennung war nicht verfügbar oder lieferte kein gültiges Ergebnis.'});}
   finally{s.extracting=false;}
  });
  app.post('/api/runs',async(req,res)=>{
   const startedAt=Date.now();
-  const parsed=z.object({claim:ClaimSchema,mode:ModeSchema}).safeParse(req.body);
+  const parsed=z.object({claim:ClaimSchema,mode:ModeSchema,allowUnclear:z.boolean().default(false)}).safeParse(req.body);
   if(!parsed.success){res.status(400).json({error:'Bitte genau eine gültige Behauptung bestätigen.'});return;}
   const s:Session=res.locals.session;const {claim:input,mode}=parsed.data;const stored=s.claims.get(input.id);
   if(!stored||stored.mode!==mode){res.status(400).json({error:'Bitte die Behauptungen erneut erkennen lassen.'});return;}
@@ -93,7 +98,12 @@ export function createApp(options:Options={}){
    s.extracting=true;
    try{
     const rechecked=await extract(providers,{text:claim.normalizedText,providedTimeScope:input.timeScope!==stored.claim.timeScope?input.timeScope:null,providedLocationScope:input.locationScope!==stored.claim.locationScope?input.locationScope:null},Math.min(options.deadlineMs??90_000,25_000));
-    if(rechecked.claims.length!==1){res.status(400).json({error:'Bitte genau eine atomare Behauptung formulieren.'});return;}
+    if(s.expires<=Date.now()){res.status(400).json({error:'Die Sitzung ist abgelaufen. Bitte erneut beginnen.'});return;}
+    if(!rechecked.claims.length){res.status(400).json({code:'no_claims',error:'Es wurde keine konkrete Aussage erkannt. Bitte präzisiere die Formulierung.'});return;}
+    if(rechecked.claims.length>1){
+     const claims=registerClaims(s,rechecked.claims,mode,stored.input);
+     res.status(409).json({code:'claim_selection_required',error:'Die bearbeitete Formulierung enthält mehrere Teilbehauptungen. Bitte wähle eine davon zur Prüfung aus.',claims});return;
+    }
     const updated=rechecked.claims[0];
     claim.checkability=updated.checkability;claim.entities=updated.entities;
     claim.timeScope=input.timeScope!==stored.claim.timeScope?input.timeScope:updated.timeScope;
@@ -103,8 +113,11 @@ export function createApp(options:Options={}){
    finally{s.extracting=false;}
    if(s.expires<=Date.now()){res.status(400).json({error:'Die Sitzung ist abgelaufen. Bitte erneut beginnen.'});return;}
   }
-  if(claim.checkability==='unclear'){res.status(400).json({error:'Bitte unklare Bezüge vor der Recherche konkretisieren.'});return;}
-  if(/\b(nächste[snmr]?|kommende[snmr]?)\s+(Monat|Jahr|Woche)\b/i.test(claim.normalizedText)&&!claim.timeScope?.trim()){res.status(400).json({error:'Bitte den ursprünglichen Zeitbezug als konkretes Datum ergänzen.'});return;}
+  const unresolvedTime=/\b(nächste[snmr]?|kommende[snmr]?)\s+(Monat|Jahr|Woche)\b/i.test(claim.normalizedText)&&!claim.timeScope?.trim();
+  if(claim.checkability==='unclear'||unresolvedTime){
+   if(!parsed.data.allowUnclear){res.status(400).json({code:'unclear_scope',error:'Einige Bezüge sind noch offen. Du kannst die Aussage präzisieren oder trotzdem mit diesen Einschränkungen recherchieren.'});return;}
+   claim.checkability='unclear';
+  }
   const active=(c:RunController)=>['queued','researching','evaluating'].includes(c.run.status);
   if([...s.runs.values()].filter(active).length>=2||[...sessions.values()].flatMap(v=>[...v.runs.values()]).filter(active).length>=8){res.status(429).json({error:'Es laufen bereits zu viele Recherchen.'});return;}
 

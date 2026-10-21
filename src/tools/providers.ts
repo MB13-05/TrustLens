@@ -13,13 +13,17 @@ export interface Providers {
   fetch(url: string, signal: AbortSignal): Promise<Page>;
 }
 export class ProviderError extends Error {
-  constructor(message: string, public readonly retryable = false) { super(message); this.name = 'ProviderError'; }
+  constructor(message: string, public readonly retryable = false, public readonly code?:'output_limit') { super(message); this.name = 'ProviderError'; }
+}
+/** Internal correction context; never returned to the browser. */
+export class ModelOutputError extends ProviderError {
+ constructor(public readonly output:unknown,public readonly issues:string[]){super('Modellantwort verletzt den Datenvertrag.');this.name='ModelOutputError';}
 }
 type Options = { modelProvider?:ModelProvider; openrouterKey?:string; openaiKey?: string; firecrawlKey?: string; model?: string; fetchImpl?: typeof globalThis.fetch };
 const SearchSchema = z.object({ success: z.literal(true), data: z.object({ web: z.array(z.object({ url: z.string(), title: z.string() })).optional() }) });
 const ResponseSchema = z.object({ status: z.string(), output: z.array(z.object({ type: z.string(), content: z.array(z.object({ type: z.string(), text: z.string().optional() })).optional() })) });
 
-const ChatResponseSchema=z.object({choices:z.array(z.object({finish_reason:z.literal('stop'),message:z.object({content:z.string().min(1),refusal:z.string().nullable().optional()})})).length(1)});
+const ChatResponseSchema=z.object({choices:z.array(z.object({finish_reason:z.string(),message:z.object({content:z.string().nullable(),refusal:z.string().nullable().optional()})})).length(1)});
 
 /** Server-side adapters. No implicit retries: every provider call remains budget-visible. */
 export function createLiveProviders(options: Options = {}): Providers {
@@ -78,7 +82,8 @@ export function createLiveProviders(options: Options = {}): Providers {
         max_tokens: 5000,
         stream: false,
       }, signal, timeoutMs));
-      if (!result.success || result.data.choices[0].message.refusal) throw new ProviderError('Modellantwort ist unvollständig, abgelehnt oder ungültig.');
+      if(result.success&&result.data.choices[0].finish_reason==='length')throw new ProviderError('Der Modellbericht wurde am Ausgabelimit abgeschnitten.',false,'output_limit');
+      if (!result.success || result.data.choices[0].finish_reason!=='stop' || result.data.choices[0].message.refusal || !result.data.choices[0].message.content?.trim()) throw new ProviderError('Modellantwort ist unvollständig, abgelehnt oder ungültig.');
       text = result.data.choices[0].message.content;
     } else {
       const result = ResponseSchema.safeParse(await post('https://api.openai.com/v1/responses', options.openaiKey ?? process.env.OPENAI_API_KEY, {
@@ -97,7 +102,7 @@ export function createLiveProviders(options: Options = {}): Providers {
     let json: unknown;
     try { json = JSON.parse(text); } catch { throw new ProviderError('Modell lieferte kein gültiges JSON.'); }
     const parsed = outputSchemas[task].safeParse(json);
-    if (!parsed.success) throw new ProviderError('Modellantwort verletzt den Datenvertrag.');
+    if (!parsed.success) throw new ModelOutputError(json,parsed.error.issues.map(issue=>`${issue.path.join('.')}: ${issue.message}`));
     return parsed.data;
   }
   return {
