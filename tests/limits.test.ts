@@ -67,7 +67,10 @@ it('uses remaining model budget for followup after edit classification and a sin
   if(task==='analyze'&&invalid){invalid=false;return {invalid:true};}
   const response=await p.model(task,data,signal);
   return task==='repair'?{...(response as object),gap:'Benötigt Originalbestätigung',followUpQuery:'Gezielte Originalbestätigung'}:response;
- }});
+ },
+ // The follow-up search finds one more page; without new material a second analysis is (rightly) skipped.
+ search:async(query,signal)=>query==='Gezielte Originalbestätigung'?[{url:'https://demo.trustlens.invalid/zusatz',title:'Zusatzquelle'}]:p.search(query,signal),
+ fetch:async(url,signal)=>url.endsWith('/zusatz')?{requestedUrl:url,finalUrl:url,title:'Zusatzquelle',publisher:'Fiktiv',publishedAt:null,updatedAt:null,text:'Zusätzlicher fiktiver Text ohne Bezug.'}:p.fetch(url,signal)});
  const agent=request.agent(app);const c=await agent.post('/api/claims').send({text:item.text,mode:'live'});const r=await agent.post('/api/runs').send({claim:{...c.body.claims[0],timeScope:'Explizite Eingrenzung'},mode:'live'});expect(r.status).toBe(201);let state=r.body;
  for(let i=0;i<100;i++){state=(await agent.get('/api/runs/'+r.body.id)).body;if(!['queued','researching','evaluating'].includes(state.status))break;await new Promise(r=>setTimeout(r,10));}
  expect(state.counters.rounds).toBe(2);expect(state.counters.model).toBe(7);expect(state.result.verdict.label).toBe('Belegt');

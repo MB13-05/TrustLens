@@ -93,6 +93,20 @@ test.describe('research quality in the interface', () => {
     expect(await a11y(page)).toEqual([]);
   });
 
+  test('verified quotations stay visible, without a verdict, when the model report cannot be validated', async ({ page }) => {
+    await checkText(page, 'ZITATRETTUNG: Die Berliner Mauer fiel am 9. November 1989.');
+    await expect(page.getByRole('heading', { name: 'Ergebnis mit Einschränkungen' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('.verdict-label')).toHaveText('?Ungeklärt');
+    await expect(page.locator('.notice.technical')).toContainText('Schema');
+    await expect(page.locator('.notice.technical')).toContainText('einzeln als wörtlich vorhanden geprüft');
+    await expect(page.getByRole('heading', { name: 'Wörtlich geprüfte Zitate (Einordnung nicht gegengeprüft)' })).toBeVisible();
+    await expect(page.locator('.evidence-card')).toHaveCount(1);
+    await expect(page.locator('.evidence-card')).toContainText('Einordnung (stützend, widersprechend, Umfang) wurde nicht gegengeprüft');
+    await expect(page.locator('.evidence-card blockquote')).toContainText('bis zum 9. November 1989 West-Berlin.');
+    await expect(page.locator('.reasons')).toHaveCount(0);
+    expect(await a11y(page)).toEqual([]);
+  });
+
   test('research can be cancelled while sources are still being read', async ({ page }) => {
     await checkText(page, MAUERFALL);
     await expect(page.getByRole('button', { name: 'Recherche abbrechen' })).toBeVisible();

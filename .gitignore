@@ -6,3 +6,7 @@ dist/
 playwright-report/
 test-results/
 *.log
+
+# Lokale Agent-Skills (nicht Teil des Projekts)
+.claude/skills/
+.agents/skills/

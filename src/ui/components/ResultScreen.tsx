@@ -109,7 +109,7 @@ function Report({ run, result }: { run: Run; result: Result }) {
                 if (!items.length) return null;
                 return (
                   <div key={relation} className="evidence-group">
-                    <h3>{relationHeading[relation]}</h3>
+                    <h3>{result.technicalNotes.length > 0 && reasons.length === 0 ? 'Wörtlich geprüfte Zitate (Einordnung nicht gegengeprüft)' : relationHeading[relation]}</h3>
                     {items.map(item => <EvidenceCard key={item.id} number={number.get(item.id)!} evidence={item} source={result.sources.find(s => s.id === item.sourceId)} chunk={result.chunks.find(c => c.id === item.chunkId)} citedBy={citedBy(item.id)} />)}
                   </div>
                 );
