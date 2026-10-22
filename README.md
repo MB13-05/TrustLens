@@ -1,54 +1,119 @@
 # TrustLens
 
-Deutschsprachiger Recherche-Prototyp: Text, Bild oder öffentlichen Instagram-/TikTok-Link eingeben, bis zu drei Behauptungen erkennen, genau eine bestätigen, Quellen recherchieren und eine belegte Einordnung lesen. Maßgebliche Spezifikation: [PLAN.md](PLAN.md).
+TrustLens ist ein deutschsprachiger **Recherche-Agent gegen Desinformation**: Du gibst einen Text, ein Bild (Screenshot) oder den Link zu einem öffentlichen Instagram-/TikTok-Beitrag ein. TrustLens erkennt prüfbare Behauptungen, du bestätigst eine, und der Agent recherchiert Quellen im Web. Am Ende steht eine Einordnung (*Belegt, Widersprochen, Kontext fehlt, Ungeklärt, Nicht sachlich prüfbar*) mit **wörtlichen Zitaten, Quellenlinks und offenen Fragen**. Fehlende Belege gelten nie als Widerlegung.
 
-## Lokal starten
+> **Status: Prototyp** (Hackathon). Lizenz: MIT. Ohne eigene Schlüssel läuft nur eine **synthetische Demo** mit fiktiven Quellen. Die Live-Recherche ist noch nicht zuverlässig abgenommen, siehe [Status und Grenzen](#status-und-grenzen).
 
-Voraussetzung: Node.js **22.12+**, empfohlen Node 24, und npm.
+**Inhalt:** [Schnellstart](#schnellstart-ohne-schlüssel) · [Live-Recherche einrichten](#live-recherche-einrichten) · [Selbst betreiben](#selbst-betreiben) · [Fehlerbehebung](#fehlerbehebung) · [Befehle](#befehle) · [Tests](#tests) · [Eingabewege](#eingabewege) · [Verträge und Laufgrenzen](#verträge-und-laufgrenzen) · [Status und Grenzen](#status-und-grenzen) · [Lizenz](#lizenz-und-eigener-betrieb)
+
+## Schnellstart (ohne Schlüssel)
+
+**Voraussetzung:** [Node.js](https://nodejs.org) ab **22.12** (empfohlen 24) und npm. Prüfen mit `node -v`.
 
 ```bash
+git clone https://github.com/MB13-05/TrustLens.git
+cd TrustLens
 npm ci
-cp .env.example .env
 npm run dev
 ```
 
-Öffne **http://localhost:3000**. Ohne Zugangsdaten funktioniert die ausdrücklich **synthetische Demo** sofort. Auf der Eingabeseite ein Beispiel auswählen; die Demo bewertet ausschließlich vorbereitete Texte. Eigene Texte und Änderungen benötigen den Live-Modus.
+Öffne **http://localhost:3000**. Wähle **Synthetische Demo**, klicke ein Beispiel an und lass die Prüfung laufen. Die Demo bewertet nur die vorbereiteten, ausdrücklich fiktiven Beispiele; eigene Texte, Bilder und Links brauchen die Live-Recherche (nächster Abschnitt).
 
-Produktionsbuild lokal prüfen:
+Die Meldung `.env not found. Continuing without it.` ist beim ersten Start normal.
 
-```bash
-npm run build
-npm start
-```
+## Live-Recherche einrichten
 
-Der Server bindet standardmäßig an `127.0.0.1`. Für einen anderen Rechner muss Node installiert sein; die bei der Entwicklung temporär verwendete Laufzeit unter `/tmp` ist kein Projektbestandteil.
+Für echte Recherchen brauchst du **zwei Zugänge**. Beide werden nur auf deinem Server gespeichert, nie im Browser.
 
-## Live konfigurieren
+1. **Modell** (erkennt Behauptungen, liest Quellen, liest Text aus Bildern): ein Konto bei [OpenRouter](https://openrouter.ai) mit etwas Guthaben und einem API-Schlüssel (Bereich *Keys*). Alternativ ein direkter OpenAI-Schlüssel (`MODEL_PROVIDER=openai`). Das Modell muss Bildeingabe können, wenn du Bilder nutzen willst; die Standardmodelle können das.
+2. **Websuche**: ein Konto bei [Firecrawl](https://www.firecrawl.dev) und dessen API-Schlüssel.
+3. **`.env` anlegen** und die Schlüssel eintragen:
 
-Nur serverseitig in `.env` setzen:
+   ```bash
+   cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
+   ```
+
+   ```ini
+   MODEL_PROVIDER=openrouter
+   OPENROUTER_API_KEY=dein-openrouter-schluessel
+   OPENROUTER_MODEL=google/gemini-2.5-flash
+   FIRECRAWL_API_KEY=dein-firecrawl-schluessel
+   ```
+
+4. **Server neu starten** (`npm run dev`). Die Datei `.env` wird nur beim Start gelesen.
+5. **Prüfen:** Auf der Startseite ist **Live-Recherche** jetzt wählbar, und das Banner nennt das Modell. Ist sie ausgegraut, fehlt einer der beiden Schlüssel.
+6. *Optional:* `npm run smoke:live` führt **eine** echte Recherche aus und gibt Status, Dauer und Zähler aus (keine Schlüssel). Das verbraucht wenige Cent.
+
+`.env` ist in `.gitignore` und darf **nie** committet oder in `VITE_*`-Variablen gesetzt werden. Setze bei OpenRouter und Firecrawl **Ausgabenlimits**, bevor jemand anderes die Anwendung nutzen kann.
+
+### Alle Einstellungen
 
 | Variable | Zweck |
 | --- | --- |
 | `MODEL_PROVIDER` | `openrouter` (Standard) oder `openai` |
-| `OPENROUTER_API_KEY` | OpenRouter-Schlüssel; Abrechnung über eure dortigen Credits |
+| `OPENROUTER_API_KEY` | OpenRouter-Schlüssel; Abrechnung über das dortige Guthaben |
 | `OPENROUTER_MODEL` | Standard `google/gemini-2.5-flash`; sparsamer: `google/gemini-2.5-flash-lite` |
-| `OPENAI_API_KEY` | Optional für den direkten OpenAI-Zugang |
+| `OPENAI_API_KEY` | Optional, direkter OpenAI-Zugang |
 | `OPENAI_MODEL` | Nur bei `MODEL_PROVIDER=openai`, Standard `gpt-4.1-mini` |
 | `FIRECRAWL_API_KEY` | Firecrawl v2 Websuche |
-| `HOST` | Standard `127.0.0.1` |
+| `HOST` | Standard `127.0.0.1` (nur lokal erreichbar) |
 | `PORT` | Standard `3000` |
 
-Sind der Schlüssel des gewählten Modellanbieters und `FIRECRAWL_API_KEY` gesetzt, lässt sich **Live-Recherche** auswählen. Das Modell extrahiert Behauptungen, plant neutrale Suchen, analysiert registrierte Quellen, benennt eine konkrete Beleglücke und prüft den Bericht gesondert. Bei einer Lücke gibt es höchstens eine Nachrecherche. Such-Snippets werden nicht als Evidenz übergeben. Die Webseite zeigt tatsächliche Tool-Ereignisse; keine internen Modellgedanken.
+Sind der Schlüssel des gewählten Modellanbieters und `FIRECRAWL_API_KEY` gesetzt, lässt sich **Live-Recherche** auswählen. Für vorhandene OpenAI-Konfigurationen ohne `MODEL_PROVIDER` bleibt OpenAI aktiv, sofern ausschließlich ein OpenAI-Schlüssel vorliegt. Mit beiden Schlüsseln ohne explizite Auswahl hat OpenRouter Vorrang; es gibt keinen stillen Wechsel zwischen den Konten.
 
-OpenRouter und der ausgewählte Modellhoster verarbeiten Eingabetext, Behauptung und Quellenausschnitte. Es werden nur Endpunkte mit Schema-Unterstützung zugelassen (`require_parameters:true`); `data_collection:deny` schließt nach OpenRouter-Klassifizierung Anbieter aus, deren Datennutzung nicht zu dieser Vorgabe passt. Das ersetzt keine Prüfung der Anbieterbedingungen. Automatische Provider-Fallbacks sind deaktiviert. Reasoning wird für die günstigen Gemini-Startmodelle deaktiviert; interne Gedanken werden nicht ausgewertet oder ausgegeben. Bei direktem OpenAI-Zugang wird `store:false` gesetzt. Firecrawl verarbeitet Suchbegriffe. Öffentliche Quellen werden direkt vom Server gelesen; der Webseitenbetreiber sieht diesen Abruf. Keine sensiblen personenbezogenen Daten eingeben. `.env` wird ignoriert; niemals Schlüssel in `VITE_*`-Variablen setzen. Ohne Provider-Schlüssel werden keine Live-Anfragen versucht.
+### Ablauf und Datenschutz
 
-Für vorhandene OpenAI-Konfigurationen ohne `MODEL_PROVIDER` bleibt OpenAI aktiv, sofern ausschließlich ein OpenAI-Schlüssel vorliegt. Mit beiden Schlüsseln ohne explizite Auswahl hat OpenRouter Vorrang; es gibt keinen stillen Wechsel zwischen den beiden Konten.
+Das Modell extrahiert Behauptungen, plant neutrale Suchen, analysiert registrierte Quellen, benennt eine konkrete Beleglücke und prüft starke Urteile gesondert. Bei einer Lücke gibt es höchstens eine Nachrecherche. Such-Snippets zählen nicht als Evidenz, nur gelesene Seitentexte. Die Oberfläche zeigt tatsächliche Tool-Ereignisse, keine internen Modellgedanken.
+
+OpenRouter und der ausgewählte Modellhoster verarbeiten Eingabetext, Behauptung und Quellenausschnitte. Es werden nur Endpunkte mit Schema-Unterstützung zugelassen (`require_parameters:true`); `data_collection:deny` schließt nach OpenRouter-Klassifizierung Anbieter aus, deren Datennutzung nicht dazu passt. Das ersetzt keine Prüfung der Anbieterbedingungen. Automatische Provider-Fallbacks sind deaktiviert, Reasoning ist abgeschaltet; interne Gedanken werden nicht ausgewertet. Bei direktem OpenAI-Zugang wird `store:false` gesetzt. Firecrawl verarbeitet Suchbegriffe. Öffentliche Quellen liest der Server direkt; der Webseitenbetreiber sieht diesen Abruf. Bitte keine sensiblen personenbezogenen Daten eingeben.
 
 ### Modellkosten als Orientierung
 
 Laut [OpenRouter-Modellseite für Gemini 2.5 Flash](https://openrouter.ai/google/gemini-2.5-flash) am 21. Oktober 2026: **0,30 US-Dollar pro Million Eingabetokens und 2,50 US-Dollar pro Million Ausgabetokens**. Die [Flash-Lite-Alternative](https://openrouter.ai/google/gemini-2.5-flash-lite) ist mit **0,10 / 0,40 US-Dollar** günstiger. Das ist eine Startauswahl für die Live-Erprobung, keine bereits gemessene Faktencheck-Qualität.
 
 Beispielrechnung für insgesamt 50.000 Eingabe- und 5.000 Ausgabetokens über alle Modellschritte: Flash etwa **0,0275 US-Dollar**, Flash-Lite etwa **0,007 US-Dollar**, jeweils ohne Suchkosten, Steuern oder mögliche Gebühren. Tatsächliche Tokenzahlen und Kosten sind noch nicht live gemessen. Preise und Verfügbarkeit können sich ändern. OpenRouter-Credits bezahlen die Modellaufrufe; Firecrawl benötigt separat einen Zugang und gegebenenfalls Credits.
+
+## Selbst betreiben
+
+TrustLens wird nicht als Dienst angeboten. Wer es öffentlich bereitstellt, betreibt es selbst und trägt die Anbieterkosten.
+
+```bash
+npm ci            # vollständig installieren, tsx wird auch im Betrieb gebraucht
+npm run build     # Typprüfung und Frontend nach dist/
+npm start         # Produktionsmodus auf http://127.0.0.1:3000
+```
+
+- **Erreichbarkeit:** Standardmäßig lauscht der Server nur auf `127.0.0.1`. Für Container oder einen Reverse-Proxy `HOST=0.0.0.0` setzen und den Port nur über den Proxy veröffentlichen.
+- **HTTPS:** Terminiere TLS in einem Reverse-Proxy (z. B. Caddy oder nginx). Hinweis: Hinter einem Proxy wird das Sitzungscookie derzeit nicht als `Secure` markiert, weil `trust proxy` nicht gesetzt ist.
+- **Genau eine Instanz:** Sitzungen, Läufe und Ratenlimits liegen im Arbeitsspeicher. Mehrere Instanzen oder Neustarts verlieren Daten (Ergebnisse werden ohnehin nach 30 Minuten gelöscht). Eine Datenbank gibt es nicht.
+- **Kosten:** Pro Lauf höchstens 7 Modellaufrufe, 4 Suchen und 6 Seitenabrufe, pro Sitzung höchstens 6 Bildanalysen und 12 schreibende Anfragen pro Minute. Das begrenzt Missbrauch, ersetzt aber keine Anbieter-Ausgabenlimits.
+- **Rechtliches:** Prüfe vor öffentlichem Betrieb die Bedingungen von OpenRouter, Firecrawl und den Plattformen (siehe [Eingabewege](#eingabewege)).
+- Ein Dockerfile oder eine Deployment-Vorlage gibt es nicht.
+
+## Fehlerbehebung
+
+| Symptom | Ursache und Abhilfe |
+| --- | --- |
+| „Live-Recherche“ ist ausgegraut | Es fehlt `OPENROUTER_API_KEY` (bzw. `OPENAI_API_KEY`) oder `FIRECRAWL_API_KEY`, oder der Server wurde nach dem Bearbeiten der `.env` nicht neu gestartet. |
+| Reiter „Bild“ meldet „nicht eingerichtet“ | Kein Schlüssel für das Modell gesetzt, oder du bist im Demo-Modus. |
+| Post-Link: „nicht öffentlich“ oder „Anmeldung nötig“ | Instagram blockiert Automaten häufig; TikTok begrenzt Abrufe. Nutze stattdessen einen Screenshot oder füge den Text ein. |
+| Ergebnis „mit Einschränkungen“ und ein gelber technischer Hinweis | Die Auswertung des Modells war nicht verwertbar (Ausgabelimit, Schema, Zitatprüfung). „Prüfung erneut starten“ hilft oft; gezeigte Zitate sind dennoch wörtlich geprüft. |
+| „Quelle nicht zugänglich“ | Paywall, Bot-Sperre, JavaScript-Seite oder PDF. Der Lauf nennt das ehrlich und nutzt die Quelle nicht als Beleg. |
+| Port 3000 belegt | `PORT=3001` in `.env` setzen. |
+| `npm ci` schlägt unter Windows mit `EPERM` fehl | Ein laufender Dev-Server sperrt Dateien in `node_modules`; Server beenden und erneut versuchen. |
+| `npm run test:e2e` findet keinen Browser | Einmal `npx playwright install chromium` ausführen. |
+
+## Befehle
+
+| Befehl | Wirkung |
+| --- | --- |
+| `npm run dev` | Entwicklungsserver mit Oberfläche auf Port 3000 |
+| `npm run build` / `npm start` | Produktionsbuild prüfen bzw. im Produktionsmodus starten |
+| `npm test` | Unit- und HTTP-Tests (Vitest) |
+| `npm run test:e2e` | Browsertests (Playwright) |
+| `npm run typecheck` | TypeScript-Prüfung |
+| `npm run smoke:live` | Eine echte Recherche, kostet wenige Cent, braucht Schlüssel |
+| `npm run smoke:classification` | Drei echte Modellaufrufe zur Unterscheidung Tatsache/Werturteil |
 
 ## Tests
 
@@ -109,7 +174,7 @@ Maximal zwölf schreibende Anfragen pro Sitzung und 120 global pro Minute, zwei 
 
 Abrufe erlauben ausschließlich HTTP/HTTPS mit Standardports, prüfen DNS und sämtliche Redirects und binden die Verbindung an die geprüfte öffentliche IP. Private, lokale, Link-Local-, Metadaten-, IPv6-Mapping- und besondere Netzbereiche sind gesperrt. Höchstens vier Redirects, 1 MB Abrufgröße, zwölf Sekunden Abrufzeit. Quellenseiten können keinerlei Toolrechte oder Schlüssel erhalten. Fremdes HTML wird extrahiert und in React nur als Text dargestellt; externe Links erhalten `noopener noreferrer`.
 
-## Demo und bekannte Grenzen
+## Status und Grenzen
 
 Die Demo verwendet ausschließlich **fiktive Organisationen und Dokumente** unter `demo.trustlens.invalid`; diese Links sind bewusst keine erreichbaren Originalquellen. Sie wird überall als synthetisch markiert. Es liegen noch keine manuell geprüften echten Demoaufzeichnungen vor. Siehe [fixtures/demo/README.md](fixtures/demo/README.md).
 
@@ -117,16 +182,10 @@ Live-Adapter sind mit Provider-Vertragsfixtures getestet. **Am 21. Oktober 2026 
 
 Der direkte Abruf unterstützt öffentliche HTML-/Textseiten; JavaScript-only-Seiten, PDFs, Paywalls, komprimierte Antworten und Bot-Sperren können unzugänglich bleiben. Ein ehrliches Teilresultat nennt diese Grenzen. Veröffentlichungsdaten stammen, falls vorhanden, aus Seitenmetadaten; ihr Fehlen bleibt `null`. Herkunftsgruppen verwenden konservativ die Domain und behaupten keine Unabhängigkeit; ein gemeinsamer Ursprung über unterschiedliche Domains wird derzeit nur durch die Beleganalyse erkannt. Wörtliche Zitierprüfung beweist keine inhaltliche Folgerichtigkeit; auch die separate Modellprüfung kann Fehler machen.
 
-Keine Konten, Datenbank oder öffentliche Historie. Es gibt keine Artikel-URL-Eingabe und keine Auswertung von Video, Ton oder Deepfakes. Bilder und Posts nur im Live-Modus. Der flüchtige Einprozess-Server ist für lokale Erprobung gedacht. Öffentliche Bereitstellung benötigt zusätzlich HTTPS, Prüfung der Anbieter- und Plattformbedingungen und eine zur Infrastruktur passende gemeinsame Raten-/Sitzungsverwaltung. Es wurde nichts veröffentlicht.
+Keine Konten, Datenbank oder öffentliche Historie. Es gibt keine Artikel-URL-Eingabe und keine Auswertung von Video, Ton oder Deepfakes. Bilder und Posts nur im Live-Modus. Der flüchtige Einprozess-Server ist für lokale Erprobung gedacht. Öffentliche Bereitstellung benötigt zusätzlich HTTPS, Prüfung der Anbieter- und Plattformbedingungen und eine zur Infrastruktur passende gemeinsame Raten-/Sitzungsverwaltung.
 
 
-### Aktuelle Korrekturen und Übergabe (21. Oktober 2026)
-
-Die Auswahl bietet bei offenen Bezügen **Trotzdem prüfen**. Fehlende Akteure, Orte oder Daten werden nicht ergänzt; offene Bezüge begrenzen das Gesamturteil auf „Ungeklärt“. Wird eine bearbeitete Aussage in mehrere Teilbehauptungen zerlegt, kehrt die Oberfläche zur ausdrücklichen Auswahl zurück.
-
-Generierte Berichte sind auf sechs Fundstellen und vier Begründungspunkte begrenzt; das Limit von 5.000 Ausgabetokens und die wörtliche Zitatprüfung bleiben bestehen. Die einzige Reparatur erhält konkrete Schemafehler samt zurückgewiesenem Bericht. Abgeschnittene OpenRouter-Antworten werden als solche erkannt. Bei technisch gescheiterter Auswertung zeigt die Oberfläche eine technische Einschränkung.
-
-Validierung: 245 Vitest-Tests, 15 gezielte Playwright-Tests auf drei Ansichten und Produktionsbuild erfolgreich. **Die Live-Belegzuordnung ist weiterhin nicht zuverlässig:** Ein Diagnoselauf mit den vier gemeldeten URLs lieferte sechs gültige Fundstellen, scheiterte aber bei einer Ergänzung. Der anschließende echte Suchlauf für „Lobbyverbände haben eine konkrete Entscheidung zur Energiewende beeinflusst.“ endete nach 21,1 Sekunden mit vier gelesenen Quellen und null verwendbaren Belegen nach der Reparatur. Der nächste Agent soll diesen Fehler gezielt reproduzieren; der Übergabeprompt steht im Commit-Body. Diese Änderung behauptet keine vollständige Behebung.
+**Live-Belegzuordnung:** Sie ist weiterhin nicht zuverlässig. Läufe können nach einer fehlgeschlagenen Modellauswertung als technisches Teilergebnis enden; wörtlich geprüfte Zitate bleiben dann sichtbar, eine Einordnung fehlt. Die Oberfläche bietet bei offenen Bezügen **Trotzdem prüfen** an, ergänzt aber nie fehlende Akteure, Orte oder Daten. Details, Messwerte und offene Punkte: [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
 
 ## Lizenz und eigener Betrieb
 

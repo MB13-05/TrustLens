@@ -140,3 +140,11 @@ Ausstehend bleiben tatsächliche Rechnungsbeträge/Tokenkosten, ein erfolgreiche
 3. **Zweite Analyse nur mit neuem Material:** Brachte die Nachrecherche keinen neuen Abschnitt (alle Kandidaten bereits bekannt oder nicht lesbar), entfällt der zweite Modellaufruf; das erste Ergebnis bleibt, der Lauf vermerkt das. Das spart einen Aufruf und verhindert, dass dieselben Texte ein gutes erstes Ergebnis verschlechtern. Mit neuen Abschnitten läuft die zweite Analyse wie bisher.
 
 **Weiterhin offen:** echte Reproduktion des Live-Falls mit Schlüsseln; ob das Modell Schema-Längen (`maxLength`) bei strikten Schemas zuverlässig einhält, ist unbekannt. Die Rettung macht Ausfälle sichtbar harmloser, verhindert sie aber nicht. OCR und Post-Import bleiben ohne echte Abnahme; TikTok war live bisher nicht erfolgreich. Screenreader-Test, umfassende Quellenbewertung und echte Kostenmessung stehen aus.
+
+## Übergabe: Stand 21. Oktober 2026 (aus der README verschoben)
+
+Die Auswahl bietet bei offenen Bezügen **Trotzdem prüfen**. Fehlende Akteure, Orte oder Daten werden nicht ergänzt; offene Bezüge begrenzen das Gesamturteil auf „Ungeklärt“. Wird eine bearbeitete Aussage in mehrere Teilbehauptungen zerlegt, kehrt die Oberfläche zur ausdrücklichen Auswahl zurück.
+
+Generierte Berichte sind auf sechs Fundstellen und vier Begründungspunkte begrenzt; das Limit von 5.000 Ausgabetokens und die wörtliche Zitatprüfung bleiben bestehen. Die einzige Reparatur erhält konkrete Schemafehler samt zurückgewiesenem Bericht. Abgeschnittene OpenRouter-Antworten werden als solche erkannt. Bei technisch gescheiterter Auswertung zeigt die Oberfläche eine technische Einschränkung.
+
+Validierung: 245 Vitest-Tests, 15 gezielte Playwright-Tests auf drei Ansichten und Produktionsbuild erfolgreich. **Die Live-Belegzuordnung ist weiterhin nicht zuverlässig:** Ein Diagnoselauf mit den vier gemeldeten URLs lieferte sechs gültige Fundstellen, scheiterte aber bei einer Ergänzung. Der anschließende echte Suchlauf für „Lobbyverbände haben eine konkrete Entscheidung zur Energiewende beeinflusst.“ endete nach 21,1 Sekunden mit vier gelesenen Quellen und null verwendbaren Belegen nach der Reparatur. Der nächste Agent soll diesen Fehler gezielt reproduzieren; der Übergabeprompt steht im Commit-Body. Diese Änderung behauptet keine vollständige Behebung.
